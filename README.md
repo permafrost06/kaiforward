@@ -53,3 +53,48 @@ Each live ext4 image is checked by replaying its journal and running
 Stale free-space counters are expected in live copies, and this phone's
 formatter leaves the inode bitmap padding unset; both are treated as harmless.
 The RPMB area cannot be read and is not included.
+
+## Flash firmware from recovery
+
+`scripts.flasher` builds a small signed package for the phone's stock recovery.
+The package writes `system`, then `boot`, from images kept on the microSD
+card:
+
+```sh
+python3 -m scripts.flasher <images-dir> --name <name> \
+    --backup backups/<dir> --push
+```
+
+`<images-dir>` holds `boot.img` and/or `system.img`; `--partitions boot` limits
+the package to one of them. The result goes into `dist/<name>/`, laid out as it
+goes on the card: `<name>.zip` plus a `<name>/` folder with the images.
+`--push` copies both into `kaiforward/` on the phone's card over ADB and checks
+their hashes on the phone. Without `--push`, copy the contents of
+`dist/<name>/` into a `kaiforward` folder on the card.
+
+To install, power off the phone and hold **D-pad Up** while pressing **Power**
+to enter recovery. Choose **Apply update from SD card**, then `kaiforward/<name>.zip`.
+When it finishes, choose **Reboot system now**. Recovery writes a log to
+`kaiforward/<name>/flash.log` on the card.
+
+The package refuses to write anything unless all of these hold:
+
+- every image matches the hash and size recorded in the package,
+- every target partition has the expected size and is not mounted.
+
+After writing each partition, the package drops the page cache and checks the
+partition's readback hash. It never writes recovery, radio, bootloader or data
+partitions, and does not wipe data.
+
+The build requires a verified backup of the target partitions, so a stock
+restore can always be built from it. That backup is also the restore source:
+
+```sh
+python3 -m scripts.flasher backups/<dir> --backup backups/<dir> \
+    --name restore-stock --push
+```
+
+Stock recovery only accepts packages signed with the AOSP test key. The
+recovery updater, busybox and test key are in `recovery/`, which records where
+each comes from, its license and its source. Signing uses `openssl`, and its
+output is byte-identical to AOSP `signapk -w`, so Java is not needed.
