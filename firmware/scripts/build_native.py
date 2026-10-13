@@ -53,7 +53,7 @@ def build(root, output, zig=None, sqlite=None):
     if raw[:7] != b'\x7fELF\x01\x01\x01' or int.from_bytes(raw[18:20], 'little') != 40:
         raise ValueError('Native output is not 32-bit little-endian ARM ELF')
     binary.chmod(0o755)
-    for name in ['init.native.rc', 'wifi.sh', 'udhcpc.sh', 'dhcp-native.conf', 'FONT-LICENSE.txt']:
+    for name in ['init.native.rc', 'wifi.sh', 'tailscale.sh', 'udhcpc.sh', 'dhcp-native.conf', 'FONT-LICENSE.txt']:
         shutil.copyfile(NATIVE / name, output / name)
     manifest = {'schema': 1, 'status': 'experimental; hardware validation pending',
                 'target': 'arm-linux-musleabi cortex_a7, static',

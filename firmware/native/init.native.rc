@@ -49,3 +49,9 @@ service kaiforward-wifi /system/bin/sh /system/kaiforward/wifi.sh
     class main
     user root
     group root wifi inet net_raw net_admin
+
+# The authenticated Tailscale runtime lives on /data and survives image updates.
+service kf-tailscale /system/bin/sh /system/kaiforward/tailscale.sh
+    class main
+    user root
+    group root inet net_raw net_admin

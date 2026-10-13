@@ -82,6 +82,31 @@ can disconnect a direct HTTP session. Initial HTTPS receiver certificates
 still use `scripts.configure_native --ca`; see the
 [firmware settings reference](firmware/README.md#settings-api).
 
+## Install Tailscale
+
+On native KaiForward firmware with root ADB and working Wi-Fi, run:
+
+```sh
+python3 -m scripts.tailscale install
+```
+
+This downloads and verifies the tested ARM binaries, preserves saved login
+state, installs the startup supervisor, and adds the boot service if needed.
+It saves verified boot backups and prints a rollback command. **It never
+reboots the phone.** If a boot change was needed, restart the phone yourself
+when ready. New installations print a Tailscale login link to open on your PC.
+
+```sh
+python3 -m scripts.tailscale status
+python3 -m scripts.tailscale login
+python3 -m scripts.tailscale stop
+python3 -m scripts.tailscale start
+```
+
+Use `--serial <serial>` before the subcommand when several phones are connected.
+See [the firmware instructions](firmware/README.md#tailscale-startup) for offline
+installation, rollback and the Wi-Fi routing integration.
+
 ## Root access
 
 Reading partitions needs root on the phone. Custom firmware such as the Gerda

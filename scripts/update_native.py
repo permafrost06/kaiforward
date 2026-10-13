@@ -16,10 +16,11 @@ from scripts.files import file_sha256
 PROJECT = Path(__file__).resolve().parents[1]
 UPDATES = '/data/kaiforward/updates'
 SERVICES = ('kf-permission', 'kaiforward-sms', 'kf-upload', 'kf-relay',
-            'kaiforward-wifi', 'kaiforward-ui')
+            'kaiforward-wifi', 'kaiforward-ui', 'kf-tailscale')
 PAYLOAD = {
     'kaiforward-native': ('/system/bin/kaiforward-native', '755'),
     'wifi.sh': ('/system/kaiforward/wifi.sh', '755'),
+    'tailscale.sh': ('/system/kaiforward/tailscale.sh', '755'),
     'udhcpc.sh': ('/system/kaiforward/udhcpc.sh', '755'),
     'dhcp-native.conf': ('/system/etc/dhcpcd/dhcpcd-hooks/99-kaiforward.conf', '644'),
     'FONT-LICENSE.txt': ('/system/kaiforward/FONT-LICENSE.txt', '644'),

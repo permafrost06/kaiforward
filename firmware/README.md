@@ -235,6 +235,87 @@ the image build and recovery-flash workflow. Receiver settings use
 `scripts.configure_native`, `scripts.settings_native`, the HTTP API, or the
 keypad UI, independently of code updates.
 
+## Tailscale startup
+
+Use the PC installer with the phone connected through root ADB and Wi-Fi:
+
+```sh
+python3 -m scripts.tailscale install
+```
+
+It downloads the tested static ARM version pinned in
+`native/tailscale-inputs.json`, verifies its SHA-256 and architecture, supplies
+a public CA bundle, and installs the runtime and startup script. Existing login
+state stays on the phone. For a new node, open the printed login link and then
+run `python3 -m scripts.tailscale status` to confirm it joined your tailnet.
+
+On older native installations, it backs up the actual boot partition on both
+the phone and PC, appends only the Tailscale service to the existing native init
+file, and checks every other ramdisk file plus the kernel/DTBs remain unchanged.
+It rejects unsupported layouts and trailing signatures. Boot writes are verified
+by readback. When the service is already present, its boot image is unchanged;
+repeating an identical installation skips payload replacement too.
+
+The installer never reboots. It starts the supervisor manually when init has
+not loaded the service yet. Restart the phone yourself to activate a newly
+added init service. Boot/kernel changes from other work must not be rolled back
+using an older Tailscale installation ID; the rollback command rejects that.
+
+Management commands work before and after the first reboot:
+
+```sh
+python3 -m scripts.tailscale status
+python3 -m scripts.tailscale login
+python3 -m scripts.tailscale stop
+python3 -m scripts.tailscale start
+python3 -m scripts.tailscale rollback <installation-id>
+```
+
+`stop` stops the current session while retaining login and boot startup. Rollback
+restores the preceding binaries, script and boot image while retaining login
+state. Ordinary installation/rollback failures run recovery on the phone;
+a power cut or forced kill can still interrupt the transaction. Its saved bundles
+remain under `/data/kaiforward/tailscale-installs/`, and verified PC boot backups
+live under `backups/tailscale/`. A stale installation lock after such an
+interruption needs inspection before removal.
+
+Use `--serial <serial>` before the subcommand to select a phone. To reuse an
+already downloaded archive or supply a public CA bundle:
+
+```sh
+python3 -m scripts.tailscale --serial <serial> install \
+  --archive /path/to/tailscale_1.104.1_arm.tgz \
+  --ca-bundle /path/to/public-ca-bundle.pem
+```
+
+The local archive must match the pinned digest. `--cache <directory>` changes
+the download/extraction cache from `data/tailscale-install/`.
+
+The `kf-tailscale` init service runs `/system/kaiforward/tailscale.sh`. Provision
+the static ARM `tailscale` and `tailscaled` binaries and a public
+`ca-certificates.crt` bundle in `/data/kaiforward/tailscale/`, with that directory
+mode 0700 and the binaries executable. The firmware images include the startup
+script; the separately provisioned binaries and authenticated `state/` directory
+remain on `/data` across boot/system image updates.
+
+The service waits for Android's Wi-Fi default route, creates the TUN device link,
+and maintains the routing rule required by Tailscale's marked outer packets.
+It restarts the daemon if it exits and restores the rule if netd removes it.
+Authenticated state retains the running preference, so boot needs no new login.
+The current integration uses Wi-Fi, leaves Android DNS unchanged, and does not
+select an exit node or accept subnet routes.
+
+After boot, inspect or stop the service through root ADB:
+
+```sh
+adb shell '/data/kaiforward/tailscale/tailscale --socket=/data/kaiforward/tailscale/tailscaled.sock status'
+adb shell stop kf-tailscale
+adb shell start kf-tailscale
+```
+
+Adding the init service to an older installation requires a boot image update;
+editing the script thereafter is supported by the native runtime updater.
+
 ## Checks and licenses
 
 ```sh

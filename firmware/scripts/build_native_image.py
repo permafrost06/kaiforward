@@ -144,6 +144,7 @@ def assemble(gerda, runtime, output, ca_bundle=None, call_kernel=None, relay_run
         shutil.copyfile(runtime / 'kaiforward-native', system / 'bin/kaiforward-native')
         shutil.copyfile(relay_runtime / 'kaiforward-relay', system / 'bin/kaiforward-relay')
         shutil.copyfile(NATIVE / 'wifi.sh', payload / 'wifi.sh')
+        shutil.copyfile(NATIVE / 'tailscale.sh', payload / 'tailscale.sh')
         shutil.copyfile(NATIVE / 'udhcpc.sh', payload / 'udhcpc.sh')
         shutil.copyfile(NATIVE / 'FONT-LICENSE.txt', payload / 'FONT-LICENSE.txt')
         shutil.copyfile(ca_bundle, payload / 'ca.pem')
@@ -152,10 +153,10 @@ def assemble(gerda, runtime, output, ca_bundle=None, call_kernel=None, relay_run
         startup = ramdisk / 'init.b2g.rc'
         startup.write_text(native_startup(startup.read_text()))
         manifest['native_files'] = {path: digest(system / path) for path in [
-            'bin/kaiforward-native', 'bin/kaiforward-relay', 'kaiforward/wifi.sh', 'kaiforward/udhcpc.sh', 'kaiforward/FONT-LICENSE.txt', 'kaiforward/ca.pem',
+            'bin/kaiforward-native', 'bin/kaiforward-relay', 'kaiforward/wifi.sh', 'kaiforward/tailscale.sh', 'kaiforward/udhcpc.sh', 'kaiforward/FONT-LICENSE.txt', 'kaiforward/ca.pem',
             'etc/dhcpcd/dhcpcd-hooks/99-kaiforward.conf']}
         manifest['native_files'].update({'lib/modules/' + name: expected for name, expected in call_manifest['modules'].items()})
-        executables = ['bin/surfaceflinger', 'bin/mediaserver', 'kaiforward/udhcpc.sh', 'bin/kaiforward-native', 'bin/kaiforward-relay', 'bin/curl', 'bin/wpa_supplicant', 'bin/dhcpcd',
+        executables = ['bin/surfaceflinger', 'bin/mediaserver', 'kaiforward/tailscale.sh', 'kaiforward/udhcpc.sh', 'bin/kaiforward-native', 'bin/kaiforward-relay', 'bin/curl', 'bin/wpa_supplicant', 'bin/dhcpcd',
                        'bin/ndc', 'bin/rild', 'bin/busybox', 'bin/sh',
                        'etc/dhcpcd/dhcpcd-run-hooks', 'vendor/picolisp/bin/picolisp']
         for directory in ['vendor/bin', 'vendor/picolisp/bin']:
