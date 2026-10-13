@@ -141,8 +141,6 @@ static void render(const char *home, int page, int item, int editing, int mode, 
                    const char *value, const char *notice) {
     (void)c;
     memset(pixels, 0, sizeof(pixels));
-    rect(0, 0, WIDTH, 40, 0x153a4b);
-    label(8, 5, "KaiForward", 2, 0xffffff);
     char line[150], status[120];
     int b = battery();
     snprintf(line, sizeof(line), b < 0 ? "Battery --" : "Battery %d%%", b);
