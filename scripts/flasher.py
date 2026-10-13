@@ -7,12 +7,14 @@ partition has the expected size and is not mounted. It then writes system
 before boot and checks each partition's readback hash. Recovery, radio,
 bootloader and data partitions are never written.
 
+Every build also makes a matching <name>-restore package that writes the
+same partitions back from a stock source, such as a backup.
+
 Stock recovery accepts packages signed with the AOSP test key. The recovery
-updater, busybox and key are in recovery/; see recovery/README.md.
+updater, busybox and key are in scripts/recovery/; see its README.md.
 """
 import argparse
-import hashlib
-import json
+import contextlib
 import os
 from pathlib import Path
 import re
@@ -30,14 +32,18 @@ from scripts.backup import EXPECTED_PRODUCT, file_sha256
 # Written in this order: boot decides what runs, so it changes last.
 PARTITIONS = ('system', 'boot')
 CARD_DIRECTORY = 'kaiforward'
-CARD = '/storage/sdcard'  # the microSD card as stock KaiOS mounts it
-NAME_PATTERN = r'[a-z0-9][a-z0-9._-]{0,39}'
+STOCK_CARD = '/storage/sdcard'  # the microSD card as stock KaiOS mounts it
+CARD_DEVICE = '/dev/block/mmcblk1p1'
+NAME_PATTERN = r'[a-z0-9][a-z0-9._-]{0,31}'
 
-RECOVERY = Path(__file__).resolve().parent.parent / 'recovery'
+RESTORE_SUFFIX = '-restore'
+
+RECOVERY = Path(__file__).resolve().parent / 'recovery'
 UPDATE_BINARY = RECOVERY / 'update-binary'
 BUSYBOX = RECOVERY / 'busybox'
 CERTIFICATE = RECOVERY / 'testkey.x509.pem'
 KEY = RECOVERY / 'testkey.pk8'
+RECOVERY_FILES = (UPDATE_BINARY, BUSYBOX, CERTIFICATE, KEY)
 
 # Recovery's /default.prop is read directly: the legacy updater's live
 # getprop() returns an empty device name on this phone.
@@ -138,33 +144,12 @@ class FlashError(RuntimeError):
     pass
 
 
-def load_backup(backup, partitions):
-    """Return the backup manifest after reverifying its images of the target partitions.
-
-    The flasher only builds for a phone whose target partitions have a
-    verified backup, so a restore package can always be built from it.
-    """
-    manifest = json.loads((backup / 'manifest.json').read_text())
-    if manifest['device']['product'] != EXPECTED_PRODUCT:
-        raise FlashError('Backup is not from a ' + EXPECTED_PRODUCT)
-    for name in partitions:
-        entry = manifest['images'].get(name)
-        if not entry:
-            raise FlashError('Backup {} has no {} image'.format(backup, name))
-        image = backup / entry['file']
-        if image.stat().st_size != entry['bytes'] or file_sha256(image) != entry['sha256']:
-            raise FlashError('Backup image failed verification: ' + str(image))
-    return manifest
-
-
-def check_image(name, path, size):
-    """Refuse images that do not fill the partition or are not the expected format."""
-    if path.stat().st_size != size:
-        raise FlashError('{} is {} bytes; the {} partition is {}'.format(path, path.stat().st_size, name, size))
+def check_image(partition, path):
+    """Refuse images that are not the expected format for the partition."""
     with path.open('rb') as image:
-        if name == 'boot' and image.read(8) != b'ANDROID!':
+        if partition == 'boot' and image.read(8) != b'ANDROID!':
             raise FlashError('{} is not an Android boot image'.format(path))
-        if name == 'system':
+        if partition == 'system':
             image.seek(1024 + 56)
             if image.read(2) != b'\x53\xef':
                 raise FlashError('{} is not an ext4 image'.format(path))
@@ -258,106 +243,163 @@ def fill(template, **values):
     return template
 
 
-def build(source, backup, name, partitions, output):
-    """Create <output>/<name>.zip and <output>/<name>/<partition>.img, the card layout."""
+def package(output, name, images):
+    """Write <output>/<name>.zip and its images in <output>/<name>/; return the files written."""
+    (output / name).mkdir()
+    listing, files = '', []
+    for partition, path in images:
+        copy = output / name / (partition + '.img')
+        subprocess.run(['cp', '--reflink=auto', str(path), str(copy)], check=True)
+        digest = file_sha256(copy)
+        if digest != file_sha256(path):
+            raise FlashError('Copy of {} does not match its source'.format(path))
+        listing += '{} {} {}\n'.format(partition, copy.stat().st_size, digest)
+        files.append((digest, copy))
+    partitions = [partition for partition, _ in images]
+    shell = fill(FLASH_SCRIPT, NAME=name)
+    subprocess.run(['sh', '-n'], input=shell.encode(), check=True)
+    writes = ''.join(fill(WRITE_STEP, PARTITION=partition, DURATION=WRITE_HINT[partition]) for partition in partitions)
+    script = fill(UPDATER_SCRIPT, NAME=name, PARTITIONS=', '.join(partitions), PRODUCT=EXPECTED_PRODUCT, WRITES=writes)
+    members = [
+        ('META-INF/com/google/android/update-binary', UPDATE_BINARY.read_bytes()),
+        ('META-INF/com/google/android/updater-script', script.encode()),
+        ('busybox', BUSYBOX.read_bytes()),
+        ('flash.sh', shell.encode()),
+        ('images', listing.encode()),
+    ]
+    with tempfile.SpooledTemporaryFile() as buffer:
+        with zipfile.ZipFile(buffer, 'w') as archive:
+            for member, data in members:
+                archive.writestr(zipfile.ZipInfo(member, date_time=(2008, 1, 1, 0, 0, 0)), data, zipfile.ZIP_DEFLATED)
+        buffer.seek(0)
+        unsigned = buffer.read()
+    signed = output / (name + '.zip')
+    signed.write_bytes(sign_package(unsigned, CERTIFICATE, KEY))
+    verify_package(signed, CERTIFICATE)
+    with zipfile.ZipFile(signed) as archive:
+        if archive.testzip() or [archive.read(member) for member, _ in members] != [data for _, data in members]:
+            raise FlashError('Signed package contents changed')
+    return [(file_sha256(signed), signed)] + files
+
+
+def build(name, images, restore_from, output):
+    """Build <name>.zip from the given images and <name>-restore.zip from restore_from.
+
+    The restore package writes the same partitions back from restore_from,
+    such as a backup directory. Both go into output, laid out as they go in
+    the card's kaiforward/ directory.
+    """
     if not re.fullmatch(NAME_PATTERN, name):
         raise FlashError('Name must match ' + NAME_PATTERN)
-    partitions = [partition for partition in PARTITIONS if partition in partitions]
-    manifest = load_backup(backup, partitions)
-    layout = manifest['layout']
-    images = []
-    for partition in partitions:
-        path = source / (partition + '.img')
-        check_image(partition, path, layout[partition]['bytes'])
-        images.append((partition, path))
+    missing = [str(path) for path in RECOVERY_FILES if not path.is_file()]
+    if missing:
+        raise FlashError('Recovery inputs are missing: ' + ', '.join(missing))
+    images = [(partition, images[partition]) for partition in PARTITIONS if partition in images]
+    restore = [(partition, restore_from / (partition + '.img')) for partition, _ in images]
+    for partition, path in images + restore:
+        check_image(partition, path)
     if output.exists():
         raise FlashError('Refusing to replace ' + str(output))
     output.mkdir(parents=True)
     try:
-        (output / name).mkdir()
-        listing = ''
-        for partition, path in images:
-            copy = output / name / (partition + '.img')
-            subprocess.run(['cp', '--reflink=auto', str(path), str(copy)], check=True)
-            digest = file_sha256(copy)
-            if digest != file_sha256(path):
-                raise FlashError('Copy of {} does not match its source'.format(path))
-            listing += '{} {} {}\n'.format(partition, copy.stat().st_size, digest)
-        shell = fill(FLASH_SCRIPT, NAME=name)
-        subprocess.run(['sh', '-n'], input=shell.encode(), check=True)
-        writes = ''.join(fill(WRITE_STEP, PARTITION=partition, DURATION=WRITE_HINT[partition]) for partition in partitions)
-        script = fill(UPDATER_SCRIPT, NAME=name, PARTITIONS=', '.join(partitions), PRODUCT=EXPECTED_PRODUCT, WRITES=writes)
-        members = [
-            ('META-INF/com/google/android/update-binary', UPDATE_BINARY.read_bytes()),
-            ('META-INF/com/google/android/updater-script', script.encode()),
-            ('busybox', BUSYBOX.read_bytes()),
-            ('flash.sh', shell.encode()),
-            ('images', listing.encode()),
-        ]
-        with tempfile.SpooledTemporaryFile() as buffer:
-            with zipfile.ZipFile(buffer, 'w') as archive:
-                for member, data in members:
-                    archive.writestr(zipfile.ZipInfo(member, date_time=(2008, 1, 1, 0, 0, 0)), data, zipfile.ZIP_DEFLATED)
-            buffer.seek(0)
-            unsigned = buffer.read()
-        package = output / (name + '.zip')
-        package.write_bytes(sign_package(unsigned, CERTIFICATE, KEY))
-        verify_package(package, CERTIFICATE)
-        with zipfile.ZipFile(package) as archive:
-            if archive.testzip() or [archive.read(member) for member, _ in members] != [data for _, data in members]:
-                raise FlashError('Signed package contents changed')
-        (output / 'SHA256SUMS').write_text(''.join('{}  {}\n'.format(file_sha256(path), path.relative_to(output))
-                                                   for path in [package] + [output / name / (p + '.img') for p in partitions]))
+        files = package(output, name, images) + package(output, name + RESTORE_SUFFIX, restore)
+        (output / 'SHA256SUMS').write_text(''.join(
+            '{}  {}\n'.format(digest, path.relative_to(output)) for digest, path in files))
     except BaseException:
         shutil.rmtree(output)
         raise
-    return package
+    return [path for _, path in files if path.suffix == '.zip']
 
 
-def push(adb, output, card=CARD, log=print):
-    """Copy the package and its images to the phone's microSD card and check their hashes there."""
+@contextlib.contextmanager
+def mounted_card(adb, log=print):
+    """Yield where the phone's microSD card is mounted, mounting it if needed.
+
+    Stock KaiOS mounts it at /storage/sdcard. Custom firmware may leave it
+    unmounted; it is then mounted on a temporary directory and unmounted again
+    afterwards, which needs root.
+    """
+    mounts = [line.split()[:2] for line in adb.shell('cat /proc/mounts').splitlines() if line.strip()]
+    if any(point == STOCK_CARD for _, point in mounts):
+        yield STOCK_CARD
+        return
+    try:
+        card = adb.shell('busybox stat -L -c %t:%T ' + CARD_DEVICE).strip()
+    except AdbError:
+        raise FlashError('No microSD card found at ' + CARD_DEVICE)
+    devices = sorted({device for device, _ in mounts if device.startswith('/dev/')})
+    numbers = dict(line.split() for line in adb.shell(
+        'for d in {}; do echo "$d $(busybox stat -L -c %t:%T $d 2>/dev/null || echo -)"; done'.format(
+            ' '.join(devices))).splitlines() if line.strip())
+    for device, point in mounts:
+        if numbers.get(device) == card:
+            yield point
+            return
+    point = adb.shell('busybox mktemp -d /dev/kfcard.XXXXXX').strip()
+    if not re.fullmatch(r'/dev/kfcard\.\w+', point):
+        raise FlashError('Unable to create a mount point: ' + point)
+    try:
+        adb.shell('busybox mount -t vfat {} {}'.format(CARD_DEVICE, point))
+    except AdbError:
+        adb.shell('rmdir ' + point)
+        raise
+    log('Mounted the microSD card on ' + point)
+    try:
+        yield point
+    finally:
+        adb.shell('sync; busybox umount {p} && rmdir {p}'.format(p=point))
+        log('Unmounted the microSD card')
+
+
+def push(adb, output, log=print):
+    """Copy the packages and their images to the phone's microSD card and check their hashes there."""
+    with mounted_card(adb, log) as card:
+        copy_to_card(adb, output, '{}/{}'.format(card, CARD_DIRECTORY), log)
+
+
+def copy_to_card(adb, output, remote, log):
     sums = [line.split('  ', 1) for line in (output / 'SHA256SUMS').read_text().splitlines()]
-    package = next(path for _, path in sums if path.endswith('.zip'))
-    name = package[:-len('.zip')]
-    remote = '{}/{}'.format(card, CARD_DIRECTORY)
-    existing = adb.shell('for f in {r}/{p} {r}/{n}; do [ -e $f ] && echo $f; done; true'.format(
-        r=remote, p=package, n=name)).split()
+    entries = sorted({path.split('/')[0] for _, path in sums})
+    existing = adb.shell('for f in {}; do [ -e $f ] && echo $f; done; true'.format(
+        ' '.join('{}/{}'.format(remote, entry) for entry in entries))).split()
     if existing:
         raise FlashError('Already on the card: ' + ', '.join(existing))
-    adb.shell('mkdir -p {r}/{n}'.format(r=remote, n=name))
+    adb.shell('mkdir -p ' + ' '.join('{}/{}'.format(remote, entry) for entry in entries if not entry.endswith('.zip')))
     for digest, path in sums:
         log('Pushing ' + path)
         adb.run('push', str(output / path), '{}/{}'.format(remote, path))
         phone = adb.shell('busybox sha256sum {}/{}'.format(remote, path), timeout=600).split()[0]
         if phone != digest:
             raise FlashError('{} on the card does not match ({})'.format(path, phone))
-    return '{}/{}'.format(CARD_DIRECTORY, package)
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('source', type=Path, help='Directory containing boot.img and/or system.img')
-    parser.add_argument('--backup', type=Path, required=True,
-                        help='Verified backup of this phone (backups/<serial>-<timestamp>)')
-    parser.add_argument('--name', required=True, help='Package name, such as gerda-native or restore-stock')
-    parser.add_argument('--partitions', nargs='+', choices=PARTITIONS, default=list(PARTITIONS),
-                        help='Partitions to flash (default: system boot)')
-    parser.add_argument('--output', type=Path, help='Output directory (default: dist/<name>)')
-    parser.add_argument('--push', action='store_true', help="Copy the result to the phone's microSD card over ADB")
-    parser.add_argument('--serial', help='ADB serial for --push (default: the only connected device)')
+    parser.add_argument('name', help='Package name, such as gerda-native-calls')
+    parser.add_argument('--system', type=Path, help='system image to flash')
+    parser.add_argument('--boot', type=Path, help='boot image to flash')
+    parser.add_argument('--restore-from', type=Path, required=True, metavar='DIR',
+                        help='Directory with the stock boot.img/system.img to restore, such as a backup')
+    parser.add_argument('--push', action='store_true', help="Copy the results to the phone's microSD card over ADB")
     args = parser.parse_args(argv)
+    images = {partition: getattr(args, partition) for partition in PARTITIONS if getattr(args, partition)}
+    if not images:
+        parser.error('give --system and/or --boot')
     os.umask(0o077)
-    output = args.output or Path('dist') / args.name
+    output = Path('dist') / args.name
     try:
-        package = build(args.source, args.backup, args.name, args.partitions, output)
-        print('Built and verified ' + str(package))
+        packages = build(args.name, images, args.restore_from, output)
+        print('Built and verified ' + ', '.join(str(path) for path in packages))
         if args.push:
-            on_card = push(Adb(args.serial), output, log=lambda text: print(text, flush=True))
-            print('On the card as ' + on_card)
+            push(Adb(), output, log=lambda text: print(text, flush=True))
+            print('Copied to {} on the card'.format(CARD_DIRECTORY))
+        else:
+            print('Copy the contents of {} into {}/ on the card'.format(output, CARD_DIRECTORY))
     except (FlashError, AdbError, subprocess.CalledProcessError, OSError) as error:
         print('Flasher failed: {}'.format(error), file=sys.stderr)
         return 1
-    print('In stock recovery choose "Apply update from SD card", then {}/{}.zip'.format(CARD_DIRECTORY, args.name))
+    print('In stock recovery choose "Apply update from SD card", then {d}/{n}.zip; '
+          '{d}/{n}{r}.zip restores stock'.format(d=CARD_DIRECTORY, n=args.name, r=RESTORE_SUFFIX))
     return 0
 
 

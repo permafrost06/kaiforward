@@ -56,51 +56,53 @@ The RPMB area cannot be read and is not included.
 
 ## Flash firmware from recovery
 
-`scripts.flasher` builds a small signed package for the phone's stock recovery.
-The package writes `system`, then `boot`, from images kept on the microSD
-card:
+`scripts.flasher` builds two small signed packages for the phone's stock
+recovery: one flashes the given images, the other restores stock firmware to the
+same partitions. Each writes `system`, then `boot`, from images kept on the
+microSD card:
 
 ```sh
-python3 -m scripts.flasher <images-dir> --name <name> \
-    --backup backups/<dir> --push
+python3 -m scripts.flasher <name> --system <system.img> --boot <boot.img> \
+    --restore-from backups/<dir>
 ```
 
-`<images-dir>` holds `boot.img` and/or `system.img`; `--partitions boot` limits
-the package to one of them. The result goes into `dist/<name>/`, laid out as it
-goes on the card: `<name>.zip` plus a `<name>/` folder with the images.
-`--push` copies both into `kaiforward/` on the phone's card over ADB and checks
-their hashes on the phone. Without `--push`, copy the contents of
-`dist/<name>/` into a `kaiforward` folder on the card.
+Give `--system`, `--boot` or both. `--restore-from` is a directory with the
+stock `system.img`/`boot.img`, such as a backup. The results go into
+`dist/<name>/`, laid out as they go in the card's `kaiforward/` folder:
+
+- `<name>.zip` and `<name>/`, which flash the given images,
+- `<name>-restore.zip` and `<name>-restore/`, which restore stock.
+
+Copy the contents of `dist/<name>/` into a `kaiforward` folder on the card, or
+add `--push` to copy them over ADB and check their hashes on the phone.
+`--push` creates `kaiforward/` if needed. If the card is not mounted, as on
+custom firmware, it mounts the card on a temporary directory (this needs root
+`adbd`) and unmounts it afterwards.
 
 To install, power off the phone and hold **D-pad Up** while pressing **Power**
-to enter recovery. Choose **Apply update from SD card**, then `kaiforward/<name>.zip`.
-When it finishes, choose **Reboot system now**. Recovery writes a log to
-`kaiforward/<name>/flash.log` on the card.
+to enter recovery. Choose **Apply update from SD card**, then
+`kaiforward/<name>.zip`. When it finishes, choose **Reboot system now**. To go
+back to stock, install `kaiforward/<name>-restore.zip` the same way. Recovery
+writes a log to the package's image folder on the card, such as
+`kaiforward/<name>/flash.log`.
 
 The package refuses to write anything unless all of these hold:
 
 - every image matches the hash and size recorded in the package,
-- every target partition has the expected size and is not mounted.
+- every target partition has the same size as its image and is not mounted.
 
 After writing each partition, the package drops the page cache and checks the
 partition's readback hash. It never writes recovery, radio, bootloader or data
 partitions, and does not wipe data.
 
-The build requires a verified backup of the target partitions, so a stock
-restore can always be built from it. That backup is also the restore source:
-
-```sh
-python3 -m scripts.flasher backups/<dir> --backup backups/<dir> \
-    --name restore-stock --push
-```
-
 Stock recovery only accepts packages signed with the AOSP test key. The
-recovery updater, busybox and test key are in `recovery/`, which records where
-each comes from, its license and its source. Signing uses `openssl`, and its
-output is byte-identical to AOSP `signapk -w`, so Java is not needed.
+recovery updater, busybox and test key are in `scripts/recovery/`, which
+records where each comes from, its license and its source; the flasher does
+not run without them. Signing uses `openssl`, and its output is byte-identical
+to AOSP `signapk -w`, so Java is not needed.
 
 ## License
 
 KaiForward is licensed under the MIT License; see `LICENSE`. The third-party
-files in `recovery/` keep their own licenses, described in
-`recovery/README.md`.
+files in `scripts/recovery/` keep their own licenses, described in
+`scripts/recovery/README.md`.
