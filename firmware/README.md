@@ -120,6 +120,66 @@ native phone through root ADB. This writes settings and requests a reload.
 The keypad UI can edit Wi-Fi and destination settings; certificates are
 provisioned from the PC.
 
+## Update over ADB
+
+Once native firmware is installed, ordinary userspace edits do not need
+boot/system images. `scripts.update_native` uses Gerda root ADB to replace
+the native executable, Wi-Fi/DHCP scripts and font license. It optionally
+replaces the call relay too. The existing init services still launch the same
+paths, so updates survive reboot without changing startup definitions.
+
+Check compatibility without writing to the phone, then build and push:
+
+```sh
+python3 -m scripts.update_native --check
+python3 -m scripts.update_native --build
+```
+
+`--build` downloads and checksum-verifies the pinned Zig/SQLite inputs in
+this project's `data/native-build/`, then reuses those archives on later
+builds. `--build-root` optionally selects a different cache directory;
+the default build does not use the old `poc/` directory. Pass `--zig` and
+`--sqlite`, as with `firmware.scripts.build_native`, to use your own toolchain.
+To install a runtime already built:
+
+```sh
+python3 -m scripts.update_native --runtime dist/native-runtime
+```
+
+To update the call helper, build it with `firmware.scripts.build_call_relay`,
+then add `--relay-runtime dist/native-call-relay` to the updater. `--build`
+builds only the native runtime. Use `--serial <serial>` to select a phone.
+
+Before replacing anything, the updater rejects stale sources, damaged
+payloads, non-ARM binaries and mismatched init definitions. It stages and
+hash-checks the bundle in `/data/kaiforward/updates/<update-id>/`, runs a small
+ARM execution check, and backs up the installed files. It stops native
+services, copies each replacement to a sibling temporary file, renames it
+into place, checks installed hashes and restarts the previously running
+services. It restores `/system` to read-only if it started that way.
+Settings, certificates and the SMS database are preserved. Updates briefly
+interrupt native services, Wi-Fi and call handling; run them while idle.
+
+An ordinary install error or termination signal triggers restoration of the
+previous runtime. Backups remain on the phone, and the updater prints the
+command to undo a successful update:
+
+```sh
+python3 -m scripts.update_native --rollback <update-id>
+```
+
+If the connection drops, reconnect and inspect the services with `--check`
+before retrying. A power cut or forced kill can interrupt the multi-file
+transaction. After reboot, if a stale `/data/kaiforward/update.lock` remains
+and no updater is running, remove that empty directory with root ADB, then
+run `--rollback <update-id>` using the ID under the phone's `updates/`
+directory. Keep the backup directory until the update has been tried on
+hardware; a startup check only proves that the processes remain running.
+
+Kernel/Wi-Fi-module changes and edits to ramdisk init definitions still use
+the image build and recovery-flash workflow. Receiver settings use
+`scripts.configure_native`, or the keypad UI, independently of code updates.
+
 ## Checks and licenses
 
 ```sh
@@ -130,7 +190,10 @@ Host tests need GCC, SQLite development headers, curl and OpenSSL. They use
 synthetic modem sockets and a receiver fixture under `tests/support/`, with
 no phone connection. They cover SMS decoding/durability/retries/TLS, call
 control, Wi-Fi configuration, Binder permissions, startup and kernel session
-selection. They do not prove carrier or hardware behavior.
+selection. Update tests run the install/rollback shell transaction against a
+disposable host filesystem, including transfer corruption, partial-copy
+failures, termination signals and startup crashes. They do not prove carrier
+or hardware behavior.
 
 The embedded font retains its license in `native/FONT-LICENSE.txt`. SQLite is
 public domain and Mbed TLS is Apache-2.0 OR GPL-2.0-or-later. The Linux kernel

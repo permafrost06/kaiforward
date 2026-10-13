@@ -8,6 +8,38 @@ produce boot/system images on the PC for packaging with `scripts.flasher`.
 See the [firmware build instructions](firmware/README.md) for dependencies,
 pinned sources, validation and provisioning.
 
+## Update native code over ADB
+
+An installed native Gerda phone can receive UI, SMS, Wi-Fi and call-helper
+updates over USB. Check the connected phone without changing it:
+
+```sh
+python3 -m scripts.update_native --check
+```
+
+Build and install the native runtime in one command:
+
+```sh
+python3 -m scripts.update_native --build
+```
+
+The builder downloads and verifies Zig/SQLite in this project's
+`data/native-build/`, and uses that cache on later builds. The build and
+update commands are independent of the old `poc/` directory.
+
+Use `--zig /path/to/zig --sqlite /path/to/sqlite-amalgamation-3500400` for
+existing build inputs. To push a runtime already built, use
+`--runtime dist/native-runtime`. Add `--serial <serial>` when multiple phones
+are connected, or `--relay-runtime dist/native-call-relay` to include a rebuilt
+call helper.
+
+The updater verifies build and transfer hashes, saves the previous files,
+replaces the native runtime on `/system`, and restarts the native services.
+Updates persist across reboot; settings and stored SMS remain in `/data`.
+Services briefly stop, including Wi-Fi and call handling. Each successful
+update prints a rollback command. See the [firmware instructions](firmware/README.md#update-over-adb)
+for the recovery procedure and which changes still need images.
+
 ## Root access
 
 Reading partitions needs root on the phone. Custom firmware such as the Gerda
