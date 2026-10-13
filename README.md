@@ -98,3 +98,9 @@ Stock recovery only accepts packages signed with the AOSP test key. The
 recovery updater, busybox and test key are in `recovery/`, which records where
 each comes from, its license and its source. Signing uses `openssl`, and its
 output is byte-identical to AOSP `signapk -w`, so Java is not needed.
+
+## License
+
+KaiForward is licensed under the MIT License; see `LICENSE`. The third-party
+files in `recovery/` keep their own licenses, described in
+`recovery/README.md`.
