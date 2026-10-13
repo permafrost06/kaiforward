@@ -1,0 +1,51 @@
+# Native mode replaces the Gecko UI and radio client. Imported by init.b2g.rc.
+on post-fs-data
+    mkdir /data/kaiforward 0700 root root
+
+on boot
+    stop bootanim
+    setprop sys.boot_completed 1
+
+# SurfaceFlinger normally launches a boot animation. Native mode owns the UI.
+on property:init.svc.bootanim=running
+    setprop service.bootanim.exit 1
+    stop bootanim
+
+# Audio settings checks normally use Gecko's Binder permission controller.
+# Native mode grants only the radio/system stack's audio-settings permission.
+service kf-permission /system/bin/kaiforward-native --permission
+    class main
+    user system
+    group system
+
+# Camera initialization in mediaserver waits for this Binder display service.
+# Without it, audio setup blocks incoming calls and then the RIL event thread.
+service kf-display /system/bin/surfaceflinger
+    class main
+    user system
+    group graphics drmrpc
+
+service kaiforward-sms /system/bin/kaiforward-native
+    class main
+    user root
+    group root radio log
+
+service kf-upload /system/bin/kaiforward-native --upload
+    class main
+    user root
+    group root inet
+
+service kf-relay /system/bin/kaiforward-relay
+    class main
+    user root
+    group root audio inet
+
+service kaiforward-ui /system/bin/kaiforward-native --ui
+    class main
+    user root
+    group root graphics input
+
+service kaiforward-wifi /system/bin/sh /system/kaiforward/wifi.sh
+    class main
+    user root
+    group root wifi inet net_raw net_admin

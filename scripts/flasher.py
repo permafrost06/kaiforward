@@ -27,7 +27,8 @@ import tempfile
 import zipfile
 
 from scripts.adb import Adb, AdbError
-from scripts.backup import EXPECTED_PRODUCT, file_sha256
+from scripts.backup import EXPECTED_PRODUCT
+from scripts.files import file_sha256
 
 # Written in this order: boot decides what runs, so it changes last.
 PARTITIONS = ('system', 'boot')

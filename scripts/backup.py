@@ -20,6 +20,7 @@ import sys
 import zlib
 
 from scripts.adb import Adb, AdbError
+from scripts.files import file_sha256
 from scripts import root_shell
 
 EXPECTED_PRODUCT = 'Nokia 8110 4G'
@@ -154,11 +155,6 @@ def copy_region(adb, name, source, skip, count, destination, log=print):
         adb.shell('rm -rf ' + workdir)
     partial.rename(destination)
     return {'file': destination.name, 'bytes': received, 'sha256': digest.hexdigest()}
-
-
-def file_sha256(path):
-    with path.open('rb') as source:
-        return hashlib.file_digest(source, 'sha256').hexdigest()
 
 
 # Harmless e2fsck findings: this phone's formatter leaves the inode bitmap

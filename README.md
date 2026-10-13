@@ -1,5 +1,13 @@
 # KaiForward
 
+## Build boot and system images
+
+The native firmware source is in [`firmware/`](firmware/README.md): keypad UI,
+SMS forwarding, Wi-Fi, call relay and the patched Nokia kernel. Its build tools
+produce boot/system images on the PC for packaging with `scripts.flasher`.
+See the [firmware build instructions](firmware/README.md) for dependencies,
+pinned sources, validation and provisioning.
+
 ## Root access
 
 Reading partitions needs root on the phone. Custom firmware such as the Gerda
@@ -105,4 +113,6 @@ to AOSP `signapk -w`, so Java is not needed.
 
 KaiForward is licensed under the MIT License; see `LICENSE`. The third-party
 files in `scripts/recovery/` keep their own licenses, described in
-`scripts/recovery/README.md`.
+`scripts/recovery/README.md`. Firmware components retain the licenses described
+in [`firmware/README.md`](firmware/README.md), including the GPL kernel patch
+and the embedded font license.
