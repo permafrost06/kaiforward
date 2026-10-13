@@ -40,6 +40,48 @@ Services briefly stop, including Wi-Fi and call handling. Each successful
 update prints a rollback command. See the [firmware instructions](firmware/README.md#update-over-adb)
 for the recovery procedure and which changes still need images.
 
+## Change settings over ADB or HTTP
+
+After installing the updated native runtime, read settings or apply a partial
+JSON file without prompts:
+
+```sh
+python3 -m scripts.settings_native get
+python3 -m scripts.settings_native set settings.json
+```
+
+For example, `settings.json` can contain:
+
+```json
+{"ssid":"Your Wi-Fi","password":"your-password","device_id":"nokia-8110"}
+```
+
+The writable fields are `ssid`, `password`, `url`, `token`, and `device_id`.
+Omitted fields keep their current values. Empty `password` selects an open
+network; empty `url` or `token` disables forwarding. Reads and update responses
+hide credentials and report `password_set` and `token_set` instead. Add
+`--serial <serial>` before `get`, `set`, or `key` to select a phone.
+
+The phone also serves `GET /v1/settings` and `PATCH /v1/settings` on port 8768.
+Both require a separate settings access key. Retrieve it over root ADB, then
+forward the HTTP port to your PC:
+
+```sh
+umask 077
+python3 -m scripts.settings_native key | sed 's/^/Authorization: Bearer /' > settings-http.header
+adb forward tcp:8768 tcp:8768
+curl -H @settings-http.header http://127.0.0.1:8768/v1/settings
+curl -X PATCH -H @settings-http.header -H 'Content-Type: application/json' \
+  --data-binary @settings.json http://127.0.0.1:8768/v1/settings
+```
+
+For direct Wi-Fi access, replace `127.0.0.1` with the phone's IP. HTTP is
+unencrypted; use the USB forward or a trusted network. Changes persist across
+reboot and request Wi-Fi reload and upload sync automatically. Changing Wi-Fi
+can disconnect a direct HTTP session. Initial HTTPS receiver certificates
+still use `scripts.configure_native --ca`; see the
+[firmware settings reference](firmware/README.md#settings-api).
+
 ## Root access
 
 Reading partitions needs root on the phone. Custom firmware such as the Gerda

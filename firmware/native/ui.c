@@ -320,7 +320,7 @@ void ui_run(const char *home, const char *preview) {
             sleeping = 1;
         }
         if (!sleeping) {
-            if (!page)
+            if (!editing)
                 config_load(home, &c);
             if (page == 2) {
                 network_count = wifi_load(home, networks, KF_NETWORKS);

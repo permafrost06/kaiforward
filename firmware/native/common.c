@@ -1,4 +1,5 @@
 #include "native.h"
+#include <arpa/inet.h>
 #include <ctype.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -69,9 +70,86 @@ int atomic_write(const char *path, const char *data) {
     return rc;
 }
 static int safe(const char *s) {
-    for (; *s; s++)
-        if ((unsigned char)*s < 32 || (unsigned char)*s == 127)
+    const unsigned char *p = (const unsigned char *)s;
+    while (*p) {
+        if (*p < 32 || *p == 127)
             return 0;
+        if (*p < 128) {
+            p++;
+            continue;
+        }
+        unsigned count, code;
+        if (*p >= 0xc2 && *p <= 0xdf) {
+            count = 1;
+            code = *p & 0x1f;
+        } else if (*p >= 0xe0 && *p <= 0xef) {
+            count = 2;
+            code = *p & 0x0f;
+        } else if (*p >= 0xf0 && *p <= 0xf4) {
+            count = 3;
+            code = *p & 7;
+        } else
+            return 0;
+        p++;
+        unsigned minimum = count == 1 ? 0x80 : count == 2 ? 0x800 : 0x10000;
+        while (count--) {
+            if ((*p & 0xc0) != 0x80)
+                return 0;
+            code = (code << 6) | (*p++ & 0x3f);
+        }
+        if (code < minimum || code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff))
+            return 0;
+    }
+    return 1;
+}
+static int receiver_url_valid(const char *url) {
+    if (!*url)
+        return 1;
+    const char *host = !strncmp(url, "https://", 8) ? url + 8 :
+                       !strncmp(url, "http://", 7) ? url + 7 : NULL;
+    if (!host || strchr(url, '#'))
+        return 0;
+    const char *end = host + strcspn(host, "/?");
+    if (memchr(host, '@', (size_t)(end - host)))
+        return 0;
+    const char *port = NULL;
+    if (*host == '[') {
+        const char *close = memchr(host, ']', (size_t)(end - host));
+        char ip[INET6_ADDRSTRLEN];
+        struct in6_addr addr;
+        if (!close || close - host <= 1 || (size_t)(close - host - 1) >= sizeof(ip))
+            return 0;
+        memcpy(ip, host + 1, (size_t)(close - host - 1));
+        ip[close - host - 1] = 0;
+        if (inet_pton(AF_INET6, ip, &addr) != 1)
+            return 0;
+        if (close + 1 != end) {
+            if (close[1] != ':')
+                return 0;
+            port = close + 2;
+        }
+    } else {
+        port = memchr(host, ':', (size_t)(end - host));
+        if ((port ? port : end) == host || memchr(host, '[', (size_t)(end - host)) ||
+            memchr(host, ']', (size_t)(end - host)))
+            return 0;
+        if (port)
+            port++;
+    }
+    if (port) {
+        if (port == end)
+            return 0;
+        unsigned n = 0;
+        for (; port < end; port++) {
+            if (!isdigit((unsigned char)*port))
+                return 0;
+            n = n * 10 + (unsigned)(*port - '0');
+            if (n > 65535)
+                return 0;
+        }
+        if (!n)
+            return 0;
+    }
     return 1;
 }
 int config_valid(const Config *c) {
@@ -91,7 +169,7 @@ int config_valid(const Config *c) {
     if (!*c->device_id)
         return 0;
     /* Empty destination is allowed during setup; upload requires URL and token. */
-    if (*c->url && strncmp(c->url, "https://", 8) && strncmp(c->url, "http://", 7))
+    if (!receiver_url_valid(c->url))
         return 0;
     if (strpbrk(c->url, " \"\\") || strpbrk(c->token, " \"\\"))
         return 0;

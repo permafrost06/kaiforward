@@ -120,6 +120,60 @@ native phone through root ADB. This writes settings and requests a reload.
 The keypad UI can edit Wi-Fi and destination settings; certificates are
 provisioned from the PC.
 
+## Settings API
+
+Use `python3 -m scripts.settings_native get` to read redacted phone settings,
+`python3 -m scripts.settings_native set settings.json` to apply a partial JSON
+object, and `python3 -m scripts.settings_native key` to retrieve the HTTP access
+key. These commands require root ADB. Pass `--serial <serial>` before the
+subcommand to choose a device. The setter stages a private file on the phone
+and removes it after the command, including on failure.
+
+The native executable also exposes these commands directly:
+
+```sh
+adb shell /system/bin/kaiforward-native --settings
+adb push settings.json /data/kaiforward/settings-input.json
+adb shell 'chmod 600 /data/kaiforward/settings-input.json && /system/bin/kaiforward-native --settings-set < /data/kaiforward/settings-input.json'
+adb shell rm /data/kaiforward/settings-input.json
+adb shell /system/bin/kaiforward-native --settings-key
+```
+
+`--settings-set` reads JSON from stdin. Supported fields are `ssid`, `password`,
+`url`, `token`, and `device_id`, all strings. Omitted fields retain their current
+values. Settings may be provisioned in stages: an empty SSID clears the saved network,
+an empty password selects an open network, and an empty URL or token disables
+uploading. Invalid fields, duplicate keys, invalid credentials, and control
+characters reject the entire patch. The maximum JSON body is 16384 bytes.
+Settings are saved atomically with mode 0600, followed by `reload` and `sync`
+requests. Keypad pages refresh external changes while no field is being edited.
+
+The existing SMS service hosts HTTP on `0.0.0.0:8768`, so ordinary runtime
+updates enable it without new init services. `--settings-bind IPv4` and
+`--settings-port PORT` override the listener when launching the daemon manually.
+If the listener cannot start, SMS and call handling continue. Nonblocking
+clients have bounded buffers and five-second deadlines.
+
+HTTP clients use `Authorization: Bearer <settings-key>` for both
+`GET /v1/settings` and `PATCH /v1/settings`. Patches require
+`Content-Type: application/json` and a `Content-Length`; chunked bodies are
+unsupported. A successful response contains `ssid`, `url`, `device_id`,
+`password_set`, and `token_set`, with no passwords, receiver tokens, or access
+keys. Invalid requests return 400, missing/wrong keys 401, unknown paths 404,
+unsupported methods 405, a busy settings writer 409, oversized requests 413,
+wrong content types 415, and storage failures 500. Responses disable caching.
+
+The access key is generated from `/dev/urandom`, saved privately in
+`/data/kaiforward/settings.key`, and retained across reboot and runtime updates.
+It is independent of the receiver token. To rotate it, stop `kaiforward-sms`,
+remove `settings.key` over root ADB, and start the service; retrieve the new key
+with `scripts.settings_native key`.
+
+See the [ADB and curl examples](../README.md#change-settings-over-adb-or-http).
+HTTP has no TLS, so use an ADB forward or a trusted LAN. A Wi-Fi change can
+disconnect a LAN client before it receives the response; read settings after
+reconnecting. CA bundles remain provisioned with `scripts.configure_native`.
+
 ## Update over ADB
 
 Once native firmware is installed, ordinary userspace edits do not need
@@ -178,7 +232,8 @@ hardware; a startup check only proves that the processes remain running.
 
 Kernel/Wi-Fi-module changes and edits to ramdisk init definitions still use
 the image build and recovery-flash workflow. Receiver settings use
-`scripts.configure_native`, or the keypad UI, independently of code updates.
+`scripts.configure_native`, `scripts.settings_native`, the HTTP API, or the
+keypad UI, independently of code updates.
 
 ## Checks and licenses
 
@@ -189,7 +244,8 @@ python3 -m unittest discover -s tests -v
 Host tests need GCC, SQLite development headers, curl and OpenSSL. They use
 synthetic modem sockets and a receiver fixture under `tests/support/`, with
 no phone connection. They cover SMS decoding/durability/retries/TLS, call
-control, Wi-Fi configuration, Binder permissions, startup and kernel session
+control, Wi-Fi configuration, settings commands/HTTP authentication and updates,
+Binder permissions, startup and kernel session
 selection. Update tests run the install/rollback shell transaction against a
 disposable host filesystem, including transfer corruption, partial-copy
 failures, termination signals and startup crashes. They do not prove carrier

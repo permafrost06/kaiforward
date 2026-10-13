@@ -67,6 +67,8 @@ int main(int argc, char **argv) {
     const char *home = KF_HOME, *sockets = "/dev/socket", *curl = "/system/bin/curl",
                *preview = NULL, *decode = NULL;
     int ui = 0, wifi = 0, upload = 0, scan = 0;
+    int settings = 0, settings_port = 8768;
+    const char *settings_bind = "0.0.0.0";
     int send_slot = 0, outbox = 0;
     int call_slot = 0;
     const char *call_action = NULL, *call_number = NULL;
@@ -82,7 +84,23 @@ int main(int argc, char **argv) {
             ui = 1;
         else if (!strcmp(argv[i], "--upload"))
             upload = 1;
-        else if (!strcmp(argv[i], "--call") && i + 2 < argc) {
+        else if (!strcmp(argv[i], "--settings"))
+            settings = 1;
+        else if (!strcmp(argv[i], "--settings-set"))
+            settings = 2;
+        else if (!strcmp(argv[i], "--settings-key"))
+            settings = 3;
+        else if (!strcmp(argv[i], "--settings-bind") && i + 1 < argc)
+            settings_bind = argv[++i];
+        else if (!strcmp(argv[i], "--settings-port") && i + 1 < argc) {
+            char *end;
+            long port = strtol(argv[++i], &end, 10);
+            if (!*argv[i] || *end || port < 1 || port > 65535) {
+                fprintf(stderr, "Settings port must be between 1 and 65535\n");
+                return 2;
+            }
+            settings_port = (int)port;
+        } else if (!strcmp(argv[i], "--call") && i + 2 < argc) {
             const char *slot = argv[++i];
             call_slot = !strcmp(slot, "1") ? 1 : !strcmp(slot, "2") ? 2 : -1;
             call_action = argv[++i];
@@ -106,7 +124,8 @@ int main(int argc, char **argv) {
         else {
             fprintf(stderr, "Usage: kaiforward-native [--home DIR] [--ui | --upload | "
                             "--wifi-config | --preview PPM | --decode PDU | --send SIM NUMBER TEXT "
-                            "| --outbox]\n");
+                            "| --outbox | --settings | --settings-set | --settings-key] "
+                            "[--settings-bind IPv4] [--settings-port PORT]\n");
             return 2;
         }
     }
@@ -157,6 +176,8 @@ int main(int argc, char **argv) {
         perror("Native storage");
         return 1;
     }
+    if (settings)
+        return settings_command(home, settings);
     if (upload) {
         uploader(home, curl);
         return 0;
@@ -207,6 +228,8 @@ int main(int argc, char **argv) {
     int controller = call_listen(home);
     if (controller < 0)
         fprintf(stderr, "Native call control unavailable; SMS remains active\n");
+    if (settings_http_open(home, settings_bind, settings_port) < 0)
+        fprintf(stderr, "Native settings HTTP unavailable; SMS remains active\n");
     char path[1200], status[500];
     snprintf(path, sizeof(path), "%s/radio.status", home);
     int64_t next = 0;
@@ -218,20 +241,22 @@ int main(int argc, char **argv) {
                 store_uncertain(db, i + 1);
             radio_send_queued(&radios[i], db);
         }
-        struct pollfd fds[3];
+        struct pollfd fds[12];
         for (int i = 0; i < 2; i++) {
             fds[i].fd = radios[i].fd;
             fds[i].events = POLLIN;
         }
         fds[2].fd = controller;
         fds[2].events = POLLIN;
-        if (poll(fds, 3, 1000) > 0) {
+        int nfds = 3 + settings_http_fds(fds + 3);
+        if (poll(fds, (nfds_t)nfds, 1000) > 0) {
             for (int i = 0; i < 2; i++)
                 if (fds[i].revents & (POLLIN | POLLHUP | POLLERR))
                     radio_read(&radios[i], db);
             if (fds[2].revents & POLLIN)
                 call_accept(controller, radios);
         }
+        settings_http_tick(home, db);
         int current_queued = store_count(db, "messages", "uploaded=0");
         if (current_queued > previous_queued) {
             char syncpath[1200];
@@ -263,6 +288,7 @@ int main(int argc, char **argv) {
     for (int i = 0; i < 2; i++)
         radio_close(&radios[i]);
     sqlite3_close(db);
+    settings_http_close();
     if (controller >= 0)
         close(controller);
     close(lock);
