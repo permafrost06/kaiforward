@@ -1,0 +1,27 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>KaiForward access</title></head>
+<body>
+<h2>KaiForward</h2>
+<p>Enable a temporary local root shell. Rebooting stops it.</p>
+<button id="enable" autofocus>Enable temporary access</button>
+<p id="status"></p>
+<script>
+'use strict';
+document.getElementById('enable').onclick = function () {
+  var status = document.getElementById('status');
+  var extension = navigator.kaiosExtension || navigator.engmodeExtension;
+  if (!extension || !extension.startUniversalCommand) {
+    status.textContent = 'Required API unavailable.';
+    return;
+  }
+  try {
+    var request = extension.startUniversalCommand(
+      '/system/bin/busybox telnetd -b 127.0.0.1 -p 2323 -l /system/bin/sh', true);
+    request.onsuccess = function () { status.textContent = 'Started. Leave the phone connected.'; };
+    request.onerror = function () { status.textContent = 'Command failed.'; };
+  } catch (error) { status.textContent = String(error); }
+};
+</script>
+</body>
+</html>
