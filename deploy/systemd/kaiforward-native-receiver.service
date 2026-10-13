@@ -1,0 +1,16 @@
+[Unit]
+Description=KaiForward HTTPS receiver for native Wi-Fi forwarding
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/frost/work/kaiforward/poc
+EnvironmentFile=/home/frost/work/kaiforward/poc/data/native-receiver/environment
+ExecStart=/usr/bin/python3 /home/frost/work/kaiforward/poc/server/receiver.py --host ${KAIFORWARD_NATIVE_HOST} --port ${KAIFORWARD_NATIVE_PORT} --tls-cert /home/frost/work/kaiforward/poc/data/native-receiver/certificate.pem --tls-key /home/frost/work/kaiforward/poc/data/native-receiver/key.pem
+Restart=on-failure
+RestartSec=3
+UMask=0077
+
+[Install]
+WantedBy=default.target

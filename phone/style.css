@@ -1,0 +1,4 @@
+body { font: 16px sans-serif; background: #101d28; color: #f3f6f8; margin: 12px; }
+h1 { font-size: 24px; margin-bottom: 8px; }
+button { font: inherit; width: 100%; padding: 10px; background: #70e0ba; color: #101d28; border: 0; }
+p { line-height: 1.35; }

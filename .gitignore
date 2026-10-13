@@ -1,0 +1,8 @@
+backups/
+data/
+.env
+*.sqlite3*
+__pycache__/
+dist/
+node_modules/
+server/viewer-build/

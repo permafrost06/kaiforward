@@ -1,0 +1,13 @@
+[Unit]
+Description=KaiForward local SMS receiver
+
+[Service]
+Type=simple
+WorkingDirectory=/home/frost/work/kaiforward/poc
+ExecStart=/usr/bin/python3 /home/frost/work/kaiforward/poc/server/receiver.py
+Restart=on-failure
+RestartSec=3
+UMask=0077
+
+[Install]
+WantedBy=default.target

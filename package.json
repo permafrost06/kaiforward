@@ -1,0 +1,6 @@
+{
+  "name": "kaiforward",
+  "private": true,
+  "scripts": {"test": "node --test tests/phone.test.cjs"},
+  "devDependencies": {"fake-indexeddb": "6.2.4"}
+}

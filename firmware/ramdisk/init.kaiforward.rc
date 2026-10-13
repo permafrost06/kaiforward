@@ -1,0 +1,8 @@
+# Health bootstrap only; cellular control and streaming are separate work.
+on post-fs-data
+    mkdir /data/kaiforward 0700 root root
+
+service kaiforward-health /system/bin/sh /system/kaiforward/health.sh
+    class main
+    user root
+    group root audio log

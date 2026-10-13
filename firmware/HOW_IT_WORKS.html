@@ -1,0 +1,467 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>KaiForward — native firmware and IP call relay</title>
+  <style>
+    :root { --kf-background:#f8fafc; --kf-foreground:#182235; --kf-muted:#eef2f7; --kf-muted-foreground:#566579; --kf-border:#d5deea; --kf-accent:#145ccc; --kf-code-background:#edf2f8; --kf-code-foreground:#17283f; --kf-font-sans:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; --kf-font-mono:ui-monospace,SFMono-Regular,Consolas,monospace; }
+    @media (prefers-color-scheme:dark) { :root { --kf-background:#10151e; --kf-foreground:#dce5f1; --kf-muted:#1b2432; --kf-muted-foreground:#a1b0c5; --kf-border:#303f54; --kf-accent:#83b7ff; --kf-code-background:#192231; --kf-code-foreground:#dbe8ff; } }
+    * { box-sizing:border-box; }
+    html { scroll-behavior:smooth; scroll-padding-top:18px; background:var(--background,var(--kf-background)); color:var(--foreground,var(--kf-foreground)); }
+    body { margin:0; font-family:var(--font-sans,var(--kf-font-sans)); font-size:15px; line-height:1.6; }
+    .layout { max-width:1200px; margin:auto; display:grid; grid-template-columns:218px minmax(0,1fr); gap:38px; padding:30px 26px 60px; }
+    aside { align-self:start; position:sticky; top:24px; }
+    nav summary { font-weight:700; margin-bottom:10px; }
+    nav ol { list-style:none; padding:0; margin:0; }
+    nav li { margin:0 0 5px; }
+    nav a { display:block; padding:4px 8px; color:var(--muted-foreground,var(--kf-muted-foreground)); border-left:2px solid transparent; text-decoration:none; font-size:13px; }
+    nav a:hover,nav a[aria-current="location"] { color:var(--accent,var(--kf-accent)); border-color:var(--accent,var(--kf-accent)); background:var(--muted,var(--kf-muted)); }
+    main { min-width:0; }
+    .eyebrow { color:var(--accent,var(--kf-accent)); font:600 12px var(--font-mono,var(--kf-font-mono)); letter-spacing:.05em; text-transform:uppercase; }
+    h1 { font-size:32px; line-height:1.15; letter-spacing:-.035em; margin:8px 0 14px; }
+    .lead { font-size:17px; margin:0 0 12px; max-width:760px; }
+    .meta,.sources { color:var(--muted-foreground,var(--kf-muted-foreground)); font-size:13px; }
+    .meta { margin-bottom:28px; }
+    section { border-top:1px solid var(--border,var(--kf-border)); padding-top:24px; margin-top:28px; }
+    h2 { font-size:22px; line-height:1.25; letter-spacing:-.015em; margin:0 0 14px; }
+    h3 { font-size:16px; margin:23px 0 8px; }
+    p { margin:10px 0; }
+    a { color:var(--accent,var(--kf-accent)); text-underline-offset:3px; overflow-wrap:anywhere; }
+    code { font-family:var(--font-mono,var(--kf-font-mono)); font-size:.88em; overflow-wrap:anywhere; }
+    p code,li code,td code { padding:2px 4px; background:var(--code-background,var(--kf-code-background)); border-radius:3px; }
+    pre { margin:13px 0; padding:16px; background:var(--code-background,var(--kf-code-background)); color:var(--code-foreground,var(--kf-code-foreground)); border:1px solid var(--border,var(--kf-border)); border-radius:5px; overflow:auto; line-height:1.5; tab-size:4; }
+    pre code { font-size:12px; overflow-wrap:normal; }
+    .snippet { position:relative; }
+    .copy { position:absolute; top:7px; right:7px; border:1px solid var(--border,var(--kf-border)); border-radius:4px; padding:3px 7px; background:var(--background,var(--kf-background)); color:var(--muted-foreground,var(--kf-muted-foreground)); font:11px var(--font-sans,var(--kf-font-sans)); cursor:pointer; }
+    .copy:hover { color:var(--accent,var(--kf-accent)); }
+    .table-wrap { overflow:auto; margin:14px 0; }
+    table { border-collapse:collapse; width:100%; font-size:13px; }
+    th { text-align:left; color:var(--muted-foreground,var(--kf-muted-foreground)); font-size:11px; text-transform:uppercase; letter-spacing:.035em; background:var(--muted,var(--kf-muted)); }
+    th,td { padding:10px 11px; border-bottom:1px solid var(--border,var(--kf-border)); vertical-align:top; }
+    .note { border-left:3px solid var(--accent,var(--kf-accent)); padding:9px 13px; background:var(--muted,var(--kf-muted)); margin:16px 0; font-size:14px; }
+    .sequence { counter-reset:step; list-style:none; padding:0; margin:14px 0; }
+    .sequence li { counter-increment:step; position:relative; padding:0 0 12px 32px; }
+    .sequence li::before { content:counter(step); position:absolute; left:0; top:1px; font:600 12px var(--font-mono,var(--kf-font-mono)); color:var(--accent,var(--kf-accent)); border:1px solid var(--border,var(--kf-border)); border-radius:50%; width:22px; height:22px; text-align:center; line-height:20px; }
+    ul { padding-left:22px; }
+    li { margin:6px 0; }
+    .tag { display:inline-block; padding:2px 7px; background:var(--muted,var(--kf-muted)); border:1px solid var(--border,var(--kf-border)); border-radius:4px; font:11px var(--font-mono,var(--kf-font-mono)); margin-right:5px; }
+    footer { margin-top:32px; border-top:1px solid var(--border,var(--kf-border)); padding-top:14px; color:var(--muted-foreground,var(--kf-muted-foreground)); font-size:12px; }
+    @media (max-width:950px) { .layout { display:block; padding:18px 0 36px; } aside { position:static; margin-bottom:26px; } nav ol { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:0 12px; } h1 { font-size:29px; } }
+    @media (max-width:480px) { body { font-size:14px; } h1 { font-size:26px; } h2 { font-size:20px; } nav a { font-size:12px; } pre { padding:13px 10px; } th,td { padding:8px; } .lead { font-size:16px; } }
+    @media print { :root { --kf-background:white; --kf-foreground:black; --kf-muted:#f3f3f3; --kf-muted-foreground:#444; --kf-border:#ccc; --kf-accent:#174e88; --kf-code-background:#f5f5f5; --kf-code-foreground:black; } .layout { display:block; padding:0; max-width:none; } aside,.copy { display:none; } section { break-inside:auto; } pre,table { break-inside:avoid; } pre { white-space:pre-wrap; } a { color:inherit; } }
+  </style>
+</head>
+<body>
+<div class="layout">
+  <aside>
+    <nav aria-label="Contents">
+      <details open>
+        <summary>Implementation guide</summary>
+        <ol>
+          <li><a href="#architecture">01 · Architecture</a></li>
+          <li><a href="#boot">02 · Boot and native UI</a></li>
+          <li><a href="#wifi">03 · Wi-Fi and configuration</a></li>
+          <li><a href="#radio">04 · Modem and RIL</a></li>
+          <li><a href="#sms">05 · SMS reception</a></li>
+          <li><a href="#upload">06 · Upload and archive</a></li>
+          <li><a href="#transport">07 · Call transport protocol</a></li>
+          <li><a href="#control">08 · Answer, dial and hangup</a></li>
+          <li><a href="#policy">09 · Audio policy and Binder</a></li>
+          <li><a href="#kernel">10 · Kernel voice session fix</a></li>
+          <li><a href="#audio">11 · Duplex PCM audio</a></li>
+          <li><a href="#cleanup">12 · Cleanup and failure behavior</a></li>
+          <li><a href="#build">13 · Build and recovery</a></li>
+          <li><a href="#operations">14 · Operation and validation</a></li>
+          <li><a href="#files">Source file index</a></li>
+        </ol>
+      </details>
+    </nav>
+  </aside>
+  <main>
+    <header>
+      <div class="eyebrow">Nokia 8110 4G / GerdaOS / KaiForward</div>
+      <h1>Native firmware and IP call relay</h1>
+      <p class="lead">The installed implementation: native framebuffer UI, durable SMS forwarding over Wi-Fi, and browser call control with duplex cellular audio.</p>
+      <p class="meta">Implementation snapshot · 13 October 2026 · Nokia TA-1059 · Kernel <code>3.10.49-kaiforward+</code><br>Code excerpts omit surrounding validation/error handling. Source links are relative to this file in <code>firmware/</code>.</p>
+    </header>
+
+    <section id="architecture">
+      <h2>01 · Architecture</h2>
+      <p>Gecko/B2G no longer owns the phone UI or the radio client. Native C programs run under Android <code>init</code>. Gerda's Android services, Qualcomm RIL libraries, audio HAL, and the original modem firmware remain underneath them. The PC runs Python services and browser interfaces.</p>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Boundary</th><th>Implementation</th><th>Responsibility</th></tr></thead>
+        <tbody>
+          <tr><td>Phone / UI</td><td><code>kaiforward-native --ui</code></td><td>Framebuffer, keypad, status, settings.</td></tr>
+          <tr><td>Phone / radio</td><td><code>kaiforward-native</code></td><td>Own both RIL sockets; receive SMS; maintain SIM/call state; execute call operations.</td></tr>
+          <tr><td>Phone / upload</td><td><code>kaiforward-native --upload</code></td><td>Upload pending SQLite records independently of radio handling.</td></tr>
+          <tr><td>Phone / Wi-Fi</td><td><code>wifi.sh</code>, supplicant, DHCP</td><td>Association, IP address, routes, DNS, reconnect.</td></tr>
+          <tr><td>Phone / calls</td><td><code>kaiforward-relay</code></td><td>TLS session, local call controller, AudioPolicy, PCM capture/playback.</td></tr>
+          <tr><td>PC / SMS</td><td><code>receiver.py</code>, <code>viewer.py</code></td><td>Authenticated archive writes and browser archive access.</td></tr>
+          <tr><td>PC / calls</td><td><code>call_relay.py</code>, browser AudioWorklet</td><td>Call commands, state, microphone and speaker streaming.</td></tr>
+        </tbody>
+      </table></div>
+      <p>SMS and calls have separate network sessions. SMS is store-and-forward HTTPS; calls use live PCM and command frames over one TLS/TCP connection. The browser uses a local WebSocket. There is no SIP server, RTP stream, WebRTC peer connection, or KaiOS app in this path. USB/ADB is used for maintenance, not runtime audio transport.</p>
+    </section>
+
+    <section id="boot">
+      <h2>02 · Boot and native UI</h2>
+      <p>The bootloader loads the kernel and ramdisk; <code>init</code> imports the native service declarations. The image disables B2G, <code>rilproxy</code> and the API daemon. The native service processes start in <code>class main</code>; keeping UI, radio, upload and relay separate prevents network or rendering work from blocking SMS reception.</p>
+      <pre><code>service kaiforward-sms /system/bin/kaiforward-native
+    class main
+    user root
+    group root radio log
+
+service kf-relay /system/bin/kaiforward-relay
+    class main
+    user root
+    group root audio inet</code></pre>
+      <p><code>ui.c</code> reads framebuffer geometry, maps display memory, draws text in C, and consumes Linux key events. It reads battery information from sysfs and service status from local files.</p>
+      <pre><code>int fb = open("/dev/graphics/fb0", O_RDWR);
+/* Geometry ioctls occur before the mapping. */
+unsigned char *mem = mmap(NULL, fix.smem_len,
+    PROT_READ | PROT_WRITE, MAP_SHARED, fb, 0);</code></pre>
+      <p>Incoming calls and new SMS wake the screen; inactivity blanks it after 30 seconds. Blanking is not full system suspend. The native keypad interface implements status/settings; the tested call controls are in the PC browser.</p>
+      <p class="sources">Source: <a href="native/init.native.rc">init.native.rc</a> · <a href="native/main.c">main.c</a> · <a href="native/ui.c">ui.c</a> · <a href="native/common.c">common.c</a></p>
+    </section>
+
+    <section id="wifi">
+      <h2>03 · Wi-Fi and configuration</h2>
+      <p>The UI saves this key/value configuration atomically to <code>/data/kaiforward/config</code>. The directory is root-private. Password and token characters remain visible while editing, as requested.</p>
+      <pre><code># Shape of the configuration; credentials below are placeholders.
+ssid=YOUR_WIFI_SSID
+password=YOUR_WIFI_PASSWORD
+url=https://192.168.0.122:8767/v1/messages
+token=YOUR_ACCESS_TOKEN
+device_id=nokia-8110</code></pre>
+      <ol class="sequence">
+        <li><code>wifi.sh</code> loads the matching Wi-Fi module, configures <code>wlan0</code>, writes the private supplicant configuration and launches <code>wpa_supplicant</code>.</li>
+        <li><code>wifi.c</code> scans and reads network results through the supplicant control interface.</li>
+        <li>BusyBox <code>udhcpc</code> obtains a lease. Its <code>udhcpc.sh</code> hook applies the address/subnet and configures Android <code>netd</code> routes, default network and DNS.</li>
+        <li>The Wi-Fi supervisor reconnects after process failure or configuration changes. The phone initiates both PC connections.</li>
+      </ol>
+      <p>The call helper derives its default host from the SMS URL and uses port <code>8769</code>; its CLI also accepts endpoint overrides. The settings screen does not expose a separate call endpoint. Changing the PC address also requires the receiver bind address and certificate to match; the phone validates the hostname/IP against <code>/data/kaiforward/ca.pem</code>.</p>
+      <p class="sources">Source: <a href="native/wifi.sh">wifi.sh</a> · <a href="native/wifi.c">wifi.c</a> · <a href="native/udhcpc.sh">udhcpc.sh</a> · <a href="native/common.c">common.c</a> · <a href="relay/relay.c">relay.c</a></p>
+    </section>
+
+    <section id="radio">
+      <h2>04 · Modem and RIL</h2>
+      <p>The modem firmware was retained. Cellular signaling still runs in the modem; Gerda's Qualcomm vendor libraries and <code>rild</code> expose Android Radio Interface Layer parcels through <code>/dev/socket/rild</code> and <code>rild2</code>, one per SIM slot.</p>
+      <p>The native radio process owns both connections. It requests SIM/app and registration state, parses unsolicited SMS/call/network events, and requests the current call list after call-state changes. SIM status is based on modem responses, rather than a hardcoded “registered” label.</p>
+      <p>The relay does not become another RIL client. It asks the existing radio process through the private controller socket, so adding calls does not displace the SMS connection.</p>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Call state</th><th>Meaning</th></tr></thead>
+        <tbody><tr><td><code>-2 / -1</code></td><td>Unknown/checking / idle</td></tr><tr><td><code>0 / 1</code></td><td>Active / held</td></tr><tr><td><code>2 / 3</code></td><td>Dialing / alerting</td></tr><tr><td><code>4 / 5</code></td><td>Incoming / waiting</td></tr></tbody>
+      </table></div>
+      <p class="sources">Source: <a href="native/radio.c">radio.c</a> · <a href="native/main.c">main.c</a> · <a href="native/call.c">call.c</a></p>
+    </section>
+
+    <section id="sms">
+      <h2>05 · SMS reception and durability</h2>
+      <ol class="sequence">
+        <li>A RIL SMS event supplies an encoded PDU and SIM slot.</li>
+        <li><code>sms.c</code> decodes sender, timestamp and GSM/UCS-2 text. <code>store.c</code> retains raw PDUs, deduplicates records and assembles multipart messages.</li>
+        <li>The SQLite transaction commits to <code>/data/kaiforward/native.sqlite3</code>.</li>
+        <li>Only then does the radio process positively acknowledge reception to the modem.</li>
+      </ol>
+      <pre><code>/* radio.c: reception branch */
+int rc = store_pdu(db, r-&gt;slot, pdu);
+ack(r, rc == 0);</code></pre>
+      <pre><code>PRAGMA journal_mode=WAL;
+PRAGMA synchronous=FULL;</code></pre>
+      <p>The local archive keeps raw, multipart and completed-message records. Unsupported PDUs remain retained; incomplete multipart messages wait for the remaining parts. <strong>Received</strong> counts completed messages; <strong>Queued</strong> counts pending uploads. Marking a message uploaded does not delete its local record.</p>
+      <p class="sources">Source: <a href="native/radio.c">radio.c</a> · <a href="native/sms.c">sms.c</a> · <a href="native/store.c">store.c</a></p>
+    </section>
+
+    <section id="upload">
+      <h2>06 · HTTPS upload and PC archive</h2>
+      <p>The independent uploader reads pending records, builds JSON and invokes native <code>curl</code> with private configuration. HTTPS verifies the PC certificate; a bearer token authenticates the device. The installed receiver URL is <code>https://192.168.0.122:8767/v1/messages</code>.</p>
+      <p><code>receiver.py</code> validates identity, token and payload, writes to <code>data/sms.sqlite3</code>, commits, then returns accepted message keys. The unique <code>(device_id, message_key)</code> key makes retries idempotent; conflicting payloads under an existing key are rejected. Native IDs use an offset of <code>1,000,000,000</code> to coexist with the earlier KaiOS archive.</p>
+      <pre><code>/* upload.c: response validation before marking the local row uploaded */
+if (extra != EOF || bad || memchr(reply, 0, size) || !ack_valid(reply, key))
+    return -1;
+return store_ack(db, id) ? -1 : 1;</code></pre>
+      <p>Failed delivery leaves the local row pending. Retry backoff grows from 20 to 300 seconds; Sync requests an immediate attempt. These are two distinct acknowledgements: modem ACK = committed on phone; upload ACK = committed on PC.</p>
+      <p>The archive is available at <a href="http://127.0.0.1:8766">http://127.0.0.1:8766</a>. <code>viewer.py</code> reads the database; the React interface in <code>viewer-ui/src/App.tsx</code> displays it.</p>
+      <p class="sources">Source: <a href="native/upload.c">upload.c</a> · <a href="native/store.c">store.c</a> · <a href="../server/receiver.py">receiver.py</a> · <a href="../server/viewer.py">viewer.py</a> · <a href="../viewer-ui/src/App.tsx">App.tsx</a></p>
+    </section>
+
+    <section id="transport">
+      <h2>07 · Call transport protocol</h2>
+      <p>The phone opens TLS/TCP to the PC on <code>8769</code> using Mbed TLS. Certificate-chain and hostname verification precede the protocol <code>HELLO</code>, which supplies protocol version <code>1</code>, device ID and token. The PC checks the private identity/token using <code>hmac.compare_digest</code>; the browser never receives those credentials.</p>
+      <pre><code>mbedtls_ssl_conf_authmode(&amp;options, MBEDTLS_SSL_VERIFY_REQUIRED);
+mbedtls_ssl_conf_ca_chain(&amp;options, &amp;certificates, NULL);
+/* ssl_set_hostname(), connect(), handshake(), verify_result() follow. */</code></pre>
+      <p>Every frame is <code>uint32_be length | uint8 type | payload</code>. Length includes the type byte and must be between 1 and 8192. Commands/results begin with a big-endian 32-bit operation ID. Framing handles TCP fragmentation/coalescing; it does not assume one read equals one packet.</p>
+      <pre><code>def encode_frame(kind, payload=b''):
+    if not 1 &lt;= kind &lt;= 9 or len(payload) + 1 &gt; MAX_FRAME:
+        raise ValueError('Invalid phone frame')
+    return struct.pack('&gt;I', len(payload) + 1) + bytes([kind]) + payload</code></pre>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Type</th><th>Direction</th><th>Payload</th></tr></thead>
+        <tbody>
+          <tr><td><code>1 HELLO</code></td><td>Both</td><td>JSON credentials; then <code>{"ok":true}</code>.</td></tr>
+          <tr><td><code>2 STATE</code></td><td>Phone → PC</td><td>JSON: two slots, call state/count/index, registration, media state/error.</td></tr>
+          <tr><td><code>3 DOWNLINK</code></td><td>Phone → PC</td><td>320 bytes of caller PCM.</td></tr>
+          <tr><td><code>4 COMMAND</code></td><td>PC → phone</td><td>Operation ID + ASCII, e.g. <code>2 answer</code>.</td></tr>
+          <tr><td><code>5 RESULT</code></td><td>Phone → PC</td><td>Operation ID + JSON result.</td></tr>
+          <tr><td><code>6 START</code></td><td>PC → phone</td><td>One byte: selected slot, 1 or 2.</td></tr>
+          <tr><td><code>7 STOP</code></td><td>PC → phone</td><td>Empty; releases relay audio.</td></tr>
+          <tr><td><code>8 UPLINK</code></td><td>PC → phone</td><td>320 bytes of microphone PCM.</td></tr>
+          <tr><td><code>9 PING</code></td><td>PC → phone</td><td>Empty acknowledgement/heartbeat.</td></tr>
+        </tbody>
+      </table></div>
+      <p>Phone state is sent approximately once per second. The PC acknowledges it and broadcasts public state over the browser WebSocket at <code>/call</code>. Only one browser owns audio at a time.</p>
+      <p class="sources">Source: <a href="relay/relay.c">relay.c</a> · <a href="../server/call_relay.py">call_relay.py</a></p>
+    </section>
+
+    <section id="control">
+      <h2>08 · Answer, dial and hangup</h2>
+      <ol class="sequence">
+        <li>An incoming-call event causes the radio owner to query <code>RIL_REQUEST_GET_CURRENT_CALLS</code> (9). Its report updates the browser.</li>
+        <li>Answer first obtains browser microphone permission and attaches audio. JavaScript submits the call command over the local WebSocket.</li>
+        <li>The PC validates the operation, allocates an operation ID, and sends a TLS <code>COMMAND</code> frame.</li>
+        <li>The phone relay submits the ASCII command to <code>/data/kaiforward/call.sock</code>, a <code>SOCK_SEQPACKET</code> socket with mode <code>0600</code> and peer-credential checks.</li>
+        <li>The radio owner validates current call state and sends the appropriate RIL request. The result returns under the same operation ID.</li>
+      </ol>
+      <pre><code>if (action == 1 &amp;&amp; r-&gt;calls == 1 &amp;&amp; r-&gt;call_state == 4)
+    code = 40; /* RIL_REQUEST_ANSWER */
+else if (action == 2 &amp;&amp; r-&gt;calls == 1 &amp;&amp; r-&gt;call_index &gt; 0) {
+    code = 12; /* RIL_REQUEST_HANGUP: an explicit call index */
+    put(args, 1);
+    put(args + 4, r-&gt;call_index);
+    size = 8;
+}</code></pre>
+      <p>Dial uses RIL request <code>10</code> and requires an idle registered slot. Answer/hangup reject ambiguous multiple-call state. The PC serializes operations and waits up to nine seconds for a result. Disconnect/timeouts report an unknown outcome; dial/answer/hangup are never automatically replayed.</p>
+      <p>Attaching browser audio does not immediately open PCM. The PC sends <code>START</code> only after the selected slot reports one active call and media is idle.</p>
+      <p class="sources">Source: <a href="../server/call-ui/app.js">app.js</a> · <a href="../server/call_relay.py">call_relay.py</a> · <a href="native/call.c">call.c</a> · <a href="native/radio.c">radio.c</a></p>
+    </section>
+
+    <section id="policy">
+      <h2>09 · Audio policy and Binder dependencies</h2>
+      <p>The relay calls Android's existing <code>media.audio_policy</code> Binder service to enter <code>MODE_IN_CALL</code> (2), then returns to <code>MODE_NORMAL</code> (0). The vendor audio HAL establishes the cellular voice path.</p>
+      <pre><code>utility("/system/bin/service", "call", "media.audio_policy", "3", "i32",
+        in_call ? "2" : "0", output, sizeof(output));
+/* Transaction 3 is SET_PHONE_STATE on this Android audio-policy ABI. */</code></pre>
+      <p>Removing Gecko exposed two dependencies: mediaserver camera initialization waited for SurfaceFlinger; audio permission checks waited for a Binder permission controller. Those waits blocked audio setup and then QCRIL's audio-related work, which also delayed SMS and hangup events.</p>
+      <p><code>kf-display</code> runs Gerda's SurfaceFlinger to satisfy the display-service dependency. The native framebuffer process still draws the phone UI. <code>kf-permission</code> supplies the narrow permission controller:</p>
+      <pre><code>if (requester != 0 &amp;&amp; requester != 1000 &amp;&amp; requester != 1013) return 0;
+if (uid != 0 &amp;&amp; uid != 1000 &amp;&amp; uid != 1001 &amp;&amp; uid != 1013) return 0;
+return !strcmp(name, "android.permission.MODIFY_AUDIO_SETTINGS");</code></pre>
+      <p>The relevant UIDs are root (0), system (1000), radio (1001), media (1013). This restores the required audio permission for the trusted stack rather than granting arbitrary permissions.</p>
+      <p class="sources">Source: <a href="relay/pcm.c">pcm.c</a> · <a href="native/permission.c">permission.c</a> · <a href="native/init.native.rc">init.native.rc</a> · <a href="../CALL_AUDIO_FINDINGS.md">CALL_AUDIO_FINDINGS.md</a></p>
+    </section>
+
+    <section id="kernel">
+      <h2>10 · Kernel voice-session correction</h2>
+      <p>The original Gerda <code>voc_start_playback</code> selection handled legacy Voice/Voice2/VoLTE but omitted VoiceMMode1/2. On this phone a SIM 2 call used VoiceMMode1, so playback could report success without selecting the active call's CVS session.</p>
+      <pre><code>if (port_id == VOICE_PLAYBACK_TX)
+    return session_id == VOICE_SESSION_VSID ||
+           session_id == VOLTE_SESSION_VSID ||
+           session_id == VOWLAN_SESSION_VSID ||
+           session_id == VOICEMMODE1_VSID;
+if (port_id == VOICE2_PLAYBACK_TX)
+    return session_id == VOICE2_SESSION_VSID ||
+           session_id == VOICEMMODE2_VSID;</code></pre>
+      <p>The patch adds the missing session families, preserves locking/reference-count and handover bookkeeping, and returns errors when playback has no usable active session. The relay selects the injection route from the running voice PCM: VoiceMMode1 is device 27; VoiceMMode2 is device 28. Legacy session devices are also considered.</p>
+      <div class="note"><strong>Voice session number ≠ physical SIM slot.</strong> SIM 2 used VoiceMMode1 in the successful test. Route selection follows the active voice session, not a slot-number assumption.</div>
+      <p>The installed kernel is <code>3.10.49-kaiforward+</code>. It retains Gerda's appended device trees and uses matching rebuilt modules. The modem firmware and calibration partitions were not replaced.</p>
+      <p class="sources">Source: <a href="kernel/kaiforward_incall_playback.h">kaiforward_incall_playback.h</a> · <a href="scripts/apply_kernel_patch.py">apply_kernel_patch.py</a> · <a href="scripts/prepare_call_kernel.py">prepare_call_kernel.py</a> · <a href="relay/pcm.c">pcm.c</a></p>
+    </section>
+
+    <section id="audio">
+      <h2>11 · Duplex PCM audio</h2>
+      <p>Transport audio is mono signed 16-bit little-endian PCM at 8 kHz. Each 20 ms frame contains <code>160 samples × 2 bytes = 320 bytes</code>; raw payload bandwidth is 128 kbit/s per direction. There is no audio compression or recording archive.</p>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Stage</th><th>Interface / format</th></tr></thead>
+        <tbody>
+          <tr><td>Cellular downlink capture</td><td><code>MultiMedia1 Mixer VOC_REC_DL</code> → <code>/dev/snd/pcmC0D0c</code>; 8 kHz S16_LE mono.</td></tr>
+          <tr><td>Phone ↔ PC ↔ browser</td><td>320-byte PCM frames; TLS/TCP on the LAN; WebSocket on PC loopback.</td></tr>
+          <tr><td>Browser speaker</td><td>AudioWorklet jitter buffer and linear resampling to the AudioContext output rate.</td></tr>
+          <tr><td>Browser microphone</td><td><code>getUserMedia</code> → AudioWorklet → 8 kHz S16 frames.</td></tr>
+          <tr><td>Cellular uplink injection</td><td><code>/dev/snd/pcmC0D1p</code>; 48 kHz S16_LE mono → selected In-call Music mixer → active modem voice session.</td></tr>
+        </tbody>
+      </table></div>
+      <h3>Caller → PC</h3>
+      <p>The relay checks for exactly one active voice-session family, closed multimedia PCMs and unused routes, then enables capture and injection. A capture child reads ALSA through direct ioctls; the parent sends <code>DOWNLINK</code> frames. The PC forwards them to the audio-owner browser.</p>
+      <p>The AudioWorklet starts playback with approximately 60 ms buffered, resamples to the browser's actual output rate, and discards old buffered audio when delay exceeds roughly 160 ms. It emits silence during underrun.</p>
+      <h3>PC → caller</h3>
+      <p>The browser requests a mono microphone with echo cancellation, noise suppression and automatic gain. The AudioWorklet averages input samples into the 8 kHz stream, quantizes to signed 16-bit, and transfers each completed frame to the page:</p>
+      <pre><code>if (this.used === 160) {
+    const buffer = this.packet.buffer;
+    this.port.postMessage(buffer, [buffer]);
+    this.packet = new Int16Array(160);
+    this.used = 0;
+}</code></pre>
+      <p>The PC sends these as <code>UPLINK</code>. The phone playback child linearly interpolates 160 samples into 960 samples for the 48 kHz injection PCM:</p>
+      <pre><code>for (int i = 0; i &lt; 160; i++) {
+    for (int j = 0; j &lt; 6; j++)
+        output[i * 6 + j] = last + (input[i] - last) * (j + 1) / 6;
+    last = input[i];
+}</code></pre>
+      <p>The 48 kHz conversion satisfies the device interface; it does not restore bandwidth beyond the 8 kHz transport. The kernel correction connects the In-call Music playback stream to the active cellular uplink.</p>
+      <h3>Concurrency and latency</h3>
+      <p>Capture and playback run in separate forked children, with nonblocking bounded pipes to the TLS parent. Blocking ALSA I/O cannot stall network parsing. Phone capture drains accumulated frames and sends the newest; uplink queues and browser/server send buffers drop delayed audio rather than grow latency.</p>
+      <p class="sources">Source: <a href="relay/pcm.c">pcm.c</a> · <a href="relay/relay.c">relay.c</a> · <a href="../server/call-ui/app.js">app.js</a> · <a href="../server/call-ui/audio-worklet.js">audio-worklet.js</a> · <a href="../server/call_relay.py">call_relay.py</a></p>
+    </section>
+
+    <section id="cleanup">
+      <h2>12 · Cleanup and failure behavior</h2>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Event</th><th>Behavior</th></tr></thead>
+        <tbody>
+          <tr><td>Browser Hang up</td><td>Stop relay PCM, send RIL hangup for the explicit call index, refresh call state.</td></tr>
+          <tr><td>Caller hangs up</td><td>RIL event updates the call list; relay detects no active call and tears down PCM/routes.</td></tr>
+          <tr><td>Disable audio / close browser</td><td>Stop microphone tracks and relay PCM. This releases audio; it does not issue a cellular hangup.</td></tr>
+          <tr><td>Wi-Fi / PC session loss</td><td>No received relay traffic for eight seconds triggers session cleanup and reconnection. Cellular call control is not replayed.</td></tr>
+          <tr><td>PCM child failure</td><td>Stop both children, release routes and report media error.</td></tr>
+          <tr><td>SMS receiver offline</td><td>Keep pending rows on disk and retry; SMS reception continues independently.</td></tr>
+        </tbody>
+      </table></div>
+      <pre><code>void audio_stop(CallAudio *a) {
+    reap(&amp;a-&gt;capture_pid);
+    reap(&amp;a-&gt;playback_pid);
+    if (a-&gt;capture &gt;= 0) close(a-&gt;capture);
+    if (a-&gt;playback &gt;= 0) close(a-&gt;playback);
+    if (a-&gt;routes) {
+        mixer(injection(a-&gt;session), 0);
+        mixer("MultiMedia1 Mixer VOC_REC_DL", 0);
+    }
+    memset(a, 0, sizeof(*a));
+    a-&gt;capture = a-&gt;playback = -1;
+}</code></pre>
+      <p>AudioPolicy returns to normal when calls end; relay-session cleanup also restores it if the helper had entered call mode. PCM cleanup closes streams and switches mixer routes off. No captured call audio is persisted.</p>
+      <p class="sources">Source: <a href="relay/pcm.c">pcm.c</a> · <a href="relay/relay.c">relay.c</a> · <a href="../server/call_relay.py">call_relay.py</a> · <a href="../server/call-ui/app.js">app.js</a></p>
+    </section>
+
+    <section id="build">
+      <h2>13 · Build and recovery</h2>
+      <ol class="sequence">
+        <li><code>build_native.py</code> cross-compiles the C core with SQLite for ARM Cortex-A7 using the musl toolchain.</li>
+        <li><code>build_call_relay.py</code> builds the static relay with Mbed TLS 3.6.7 from a checksum-verified source archive.</li>
+        <li>The kernel scripts apply the voice playback correction and build the kernel/modules. <code>prepare_call_kernel.py</code> retains the working native ramdisk and Gerda's original 46 appended device trees; module release/symbol CRC checks protect compatibility.</li>
+        <li><code>build_native_image.py</code> assembles boot/system images, disables Gecko startup, installs native programs and validates startup entries, hashes, executable permissions and filesystem consistency.</li>
+        <li><code>package_recovery.py</code> signs the recovery installer. Installation updates boot/system while retaining settings/SMS under <code>/data</code>.</li>
+      </ol>
+      <p>The initial recovery loop was caused by host staging permissions: ramdisk root/mount directories became <code>0700</code>, preventing non-root critical services from traversing them. Their correct mode is <code>0755</code>. That was independent of the modem firmware.</p>
+      <div class="table-wrap"><table>
+        <thead><tr><th>SD-card package</th><th>Purpose</th></tr></thead>
+        <tbody>
+          <tr><td><code>18-install-native-calls.zip</code></td><td>Complete native boot/system package with call support.</td></tr>
+          <tr><td><code>19-native-call-startup.zip</code></td><td>Boot startup update; requires matching installed relay/core/modules.</td></tr>
+          <tr><td><code>17-restore-native-kernel.zip</code></td><td>Restore the earlier native Gerda kernel/modules for SMS/status use.</td></tr>
+        </tbody>
+      </table></div>
+      <p>The running phone was updated and readback-checked in stages. The assembled complete boot/system package has been validated, but its full system image has not itself been flashed. Modem, calibration, recovery and bootloader partitions were preserved.</p>
+      <p class="sources">Source: <a href="scripts/build_native.py">build_native.py</a> · <a href="scripts/build_call_relay.py">build_call_relay.py</a> · <a href="scripts/prepare_call_kernel.py">prepare_call_kernel.py</a> · <a href="scripts/build_native_image.py">build_native_image.py</a> · <a href="scripts/package_recovery.py">package_recovery.py</a> · <a href="scripts/package_native_boot_repair.py">package_native_boot_repair.py</a></p>
+    </section>
+
+    <section id="operations">
+      <h2>14 · Operation and verified behavior</h2>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Endpoint</th><th>Use</th><th>Exposure</th></tr></thead>
+        <tbody>
+          <tr><td><a href="http://127.0.0.1:8766">127.0.0.1:8766</a></td><td>SMS archive UI</td><td>PC loopback HTTP</td></tr>
+          <tr><td><code>192.168.0.122:8767/v1/messages</code></td><td>Native SMS receiver</td><td>LAN HTTPS</td></tr>
+          <tr><td><a href="http://127.0.0.1:8768">127.0.0.1:8768</a></td><td>Browser calls and <code>/call</code> WebSocket</td><td>PC loopback HTTP/WS; Host/Origin checked</td></tr>
+          <tr><td><code>192.168.0.122:8769</code></td><td>Phone relay</td><td>LAN TLS/TCP; device authentication</td></tr>
+        </tbody>
+      </table></div>
+      <p>Phone services start at boot. The PC uses systemd <em>user</em> services enabled for the login session, with restart on failure. The PC must be awake and reachable for live calls; if it is offline, SMS accumulates on the phone.</p>
+      <pre><code># PC: service state and relay logs
+systemctl --user status kaiforward-viewer kaiforward-native-receiver kaiforward-call-relay
+journalctl --user -u kaiforward-call-relay -n 60 --no-pager
+
+# Phone: kernel, native service state, radio/upload status
+adb shell uname -r
+adb shell getprop init.svc.kf-relay
+adb shell cat /data/kaiforward/radio.status
+adb shell cat /data/kaiforward/upload.status</code></pre>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Location</th><th>Contents</th></tr></thead>
+        <tbody>
+          <tr><td>Phone <code>/data/kaiforward/config</code></td><td>Wi-Fi settings, destination, device identity/token.</td></tr>
+          <tr><td>Phone <code>/data/kaiforward/native.sqlite3</code></td><td>Durable received SMS and upload state.</td></tr>
+          <tr><td>Phone <code>/data/kaiforward/ca.pem</code></td><td>Trusted PC certificate.</td></tr>
+          <tr><td>PC <code>data/sms.sqlite3</code></td><td>Native and historical SMS archive.</td></tr>
+          <tr><td>PC <code>data/config.json</code></td><td>Receiver identity/token; private credentials.</td></tr>
+          <tr><td>PC <code>data/native-receiver/</code></td><td>Certificate, private key and service environment.</td></tr>
+          <tr><td>PC <code>data/call-relay/hardware-result.json</code></td><td>Hardware verification evidence and build hashes.</td></tr>
+        </tbody>
+      </table></div>
+      <p><span class="tag">57 Python tests</span><span class="tag">10 JavaScript tests</span><span class="tag">SIM 2 hardware test</span></p>
+      <p>The owner confirmed two-way audio and browser hangup on SIM 2. Caller hangup cleared and SMS reception advanced correctly. After the call, both PCM streams were closed, capture/injection mixers were off and AudioPolicy was normal. Automatic relay startup and Wi-Fi/TLS reconnection after reboot were verified. The last archive check showed four native messages uploaded with queue zero.</p>
+      <p>Outgoing dialing is implemented but not carrier-tested. SIM 1 calls, multiple-call/call-waiting handling, handovers and long unattended operation remain unverified. Call controls deliberately reject ambiguous multiple-call state. Caller-number presentation and a complete native phone dialer/ringtone workflow are not implemented.</p>
+      <p class="sources">Source: <a href="../deploy/systemd/kaiforward-call-relay.service">call-relay.service</a> · <a href="../deploy/systemd/kaiforward-native-receiver.service">native-receiver.service</a> · <a href="../deploy/systemd/kaiforward-viewer.service">viewer.service</a> · <a href="../data/call-relay/hardware-result.json">hardware-result.json</a></p>
+    </section>
+
+    <section id="files">
+      <h2>Source file index</h2>
+      <div class="table-wrap"><table>
+        <thead><tr><th>File</th><th>Entry points / role</th></tr></thead>
+        <tbody>
+          <tr><td><a href="native/init.native.rc">firmware/native/init.native.rc</a></td><td>Boot services and native process roles.</td></tr>
+          <tr><td><a href="native/main.c">firmware/native/main.c</a></td><td>Radio/controller event loop; service mode dispatch.</td></tr>
+          <tr><td><a href="native/ui.c">firmware/native/ui.c</a></td><td><code>ui_run</code>; framebuffer and keypad handling.</td></tr>
+          <tr><td><a href="native/common.c">firmware/native/common.c</a></td><td><code>atomic_write</code>, <code>config_load</code>, <code>config_save</code>.</td></tr>
+          <tr><td><a href="native/radio.c">firmware/native/radio.c</a></td><td><code>radio_call</code>; RIL parcels, events and modem acknowledgements.</td></tr>
+          <tr><td><a href="native/sms.c">firmware/native/sms.c</a></td><td><code>sms_decode</code>; PDU parsing/text decoding.</td></tr>
+          <tr><td><a href="native/store.c">firmware/native/store.c</a></td><td><code>store_pdu</code>, <code>store_ack</code>; transactions and multipart assembly.</td></tr>
+          <tr><td><a href="native/upload.c">firmware/native/upload.c</a></td><td>Authenticated upload, strict ACK validation, retry loop.</td></tr>
+          <tr><td><a href="native/call.c">firmware/native/call.c</a></td><td><code>call_listen</code>; private local call-control socket.</td></tr>
+          <tr><td><a href="native/permission.c">firmware/native/permission.c</a></td><td>Native Binder permission controller.</td></tr>
+          <tr><td><a href="native/wifi.sh">firmware/native/wifi.sh</a> / <a href="native/udhcpc.sh">udhcpc.sh</a> / <a href="native/wifi.c">wifi.c</a></td><td>Association, scan, DHCP and netd setup.</td></tr>
+          <tr><td><a href="relay/relay.c">firmware/relay/relay.c</a></td><td><code>session</code>; TLS framing, authentication, commands and state.</td></tr>
+          <tr><td><a href="relay/pcm.c">firmware/relay/pcm.c</a></td><td><code>audio_mode</code>, <code>audio_start</code>, <code>audio_stop</code>; ALSA, mixer and child processes.</td></tr>
+          <tr><td><a href="kernel/kaiforward_incall_playback.h">firmware/kernel/kaiforward_incall_playback.h</a></td><td>Corrected native voice-session playback selection.</td></tr>
+          <tr><td><a href="../server/receiver.py">server/receiver.py</a> / <a href="../server/viewer.py">viewer.py</a></td><td>PC archive ingestion and read API.</td></tr>
+          <tr><td><a href="../viewer-ui/src/App.tsx">viewer-ui/src/App.tsx</a></td><td>SMS archive browser frontend.</td></tr>
+          <tr><td><a href="../server/call_relay.py">server/call_relay.py</a></td><td>Phone TLS server, browser HTTP/WS, command correlation and audio ownership.</td></tr>
+          <tr><td><a href="../server/call-ui/app.js">server/call-ui/app.js</a> / <a href="../server/call-ui/audio-worklet.js">audio-worklet.js</a></td><td>Call buttons, microphone permission, PCM resampling and jitter buffer.</td></tr>
+        </tbody>
+      </table></div>
+      <p>Additional implementation notes: <a href="NATIVE_UI.md">NATIVE_UI.md</a> · <a href="CALL_RELAY.md">CALL_RELAY.md</a> · <a href="../CALL_AUDIO_FINDINGS.md">CALL_AUDIO_FINDINGS.md</a> · <a href="README.md">firmware README</a>.</p>
+    </section>
+    <footer>This document describes the implemented system and records the verification scope at the snapshot date. No credentials or SMS contents are embedded. Keep this HTML in the project tree to preserve relative source links.</footer>
+  </main>
+</div>
+<script>
+  document.querySelectorAll('pre').forEach(pre => {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'snippet';
+    pre.before(wrapper); wrapper.append(pre);
+    const button = document.createElement('button');
+    button.className = 'copy'; button.type = 'button'; button.textContent = 'Copy';
+    button.setAttribute('aria-label', 'Copy code excerpt');
+    button.addEventListener('click', async () => {
+      const text = pre.textContent;
+      try {
+        if (navigator.clipboard && window.isSecureContext) await navigator.clipboard.writeText(text);
+        else {
+          const area = document.createElement('textarea'); area.value = text;
+          area.style.position = 'fixed'; area.style.opacity = '0'; document.body.append(area);
+          area.select(); const copied = document.execCommand('copy'); area.remove();
+          if (!copied) throw new Error('Copy unavailable');
+        }
+        button.textContent = 'Copied';
+      } catch (_) { button.textContent = 'Select code'; }
+      setTimeout(() => { button.textContent = 'Copy'; }, 1600);
+    });
+    wrapper.append(button);
+  });
+  if ('IntersectionObserver' in window) {
+    const links = Array.from(document.querySelectorAll('nav a'));
+    const observer = new IntersectionObserver(entries => {
+      entries.filter(e => e.isIntersecting).forEach(entry => {
+        links.forEach(link => {
+          if (link.hash === '#' + entry.target.id) link.setAttribute('aria-current', 'location');
+          else link.removeAttribute('aria-current');
+        });
+      });
+    }, {rootMargin:'0px 0px -65% 0px', threshold:0});
+    document.querySelectorAll('main section').forEach(section => observer.observe(section));
+  }
+</script>
+</body>
+</html>

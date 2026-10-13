@@ -1,0 +1,13 @@
+{
+  "name": "KaiForward",
+  "description": "Back up received and sent SMS to your own service",
+  "type": "certified",
+  "origin": "app://kaiforward.local",
+  "launch_path": "/index.html",
+  "default_locale": "en-US",
+  "developer": {"name": "KaiForward"},
+  "permissions": {"sms": {}, "alarms": {}, "storage": {}, "systemXHR": {}, "power": {}},
+  "messages": [{"sms-received": "/background.html"}, {"sms-sent": "/background.html"}, {"alarm": "/background.html"}],
+  "icons": {"56": "/icon.png", "112": "/icon.png"},
+  "csp": "default-src 'self'; script-src 'self'; style-src 'self'; connect-src https: http://127.0.0.1:8765"
+}
