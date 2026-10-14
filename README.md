@@ -88,7 +88,14 @@ still use `scripts.configure_native --ca`; see the
 ## Call relay server
 
 Browser call control runs on a separate server reachable over Tailscale, not
-on Convex. See [`call-relay/`](call-relay/README.md).
+on Convex. On that server, with the phone on root ADB, prepare its private
+token and certificate and point the phone at it:
+
+```sh
+python3 -m scripts.call_relay
+```
+
+See [`call-relay/`](call-relay/README.md) for running the server.
 
 ## Install Tailscale
 

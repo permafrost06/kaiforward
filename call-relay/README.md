@@ -12,46 +12,53 @@ phone can reach over Tailscale.
 
 Requires Python 3.11+ with `websockets` 13 or newer (`pip install websockets`).
 
-## Run
+## Set up
+
+On the server machine, with the phone connected over root ADB, run from the
+repository root:
 
 ```sh
-umask 077
-printf '%s\n' '<receiver token>' > token     # the phone's `token` setting
-python3 call-relay/server.py --token-file token \
-  --certificate relay.crt --key relay.key \
+python3 -m scripts.call_relay
+```
+
+This prepares the server's private credentials in `data/call-relay-server/`
+(git-ignored, mode 0600) and configures the phone:
+
+| File | Purpose |
+| --- | --- |
+| `token` | Copied from the phone's `token` setting. The server accepts only a phone that presents it. It is also the SMS upload token for Convex, so keep it private. |
+| `relay.crt`, `relay.key` | Self-signed certificate for the server address, valid for 10 years, and its private key. The phone accepts only a server presenting this certificate. |
+
+On the phone, it installs `relay.crt` as `/data/kaiforward/relay-ca.pem` and
+sets `relay_url` to `tls://<host>:8769`. It never prints the token.
+
+The address defaults to this machine's Tailscale IPv4 (`tailscale ip -4`).
+Use `--host` for another address or a MagicDNS name, `--port` for another
+port, and `--serial` to choose a phone. Running it again is safe. It recopies
+the token and keeps the certificate unless the address changed, the
+certificate expires within 30 days, or `--renew` is given. Rerun it after
+changing the phone's token or moving the server.
+
+The phone tries `relay-ca.pem` first, then `ca.pem`, then the bundled public
+roots. A certificate from `tailscale cert` therefore needs no `relay-ca.pem`,
+but the phone must then resolve the MagicDNS name. `relay_url` can also be
+changed from the keypad (**Settings → Call relay URL**), with
+`scripts.settings_native set`, or with `PATCH /v1/settings`. An empty
+`relay_url` disables the call relay; the SMS `url` is separate.
+
+## Run
+
+The setup script prints the exact command. For the defaults:
+
+```sh
+python3 call-relay/server.py --token-file data/call-relay-server/token \
+  --certificate data/call-relay-server/relay.crt --key data/call-relay-server/relay.key \
   --phone-host <tailscale-ip>
 ```
 
-`--phone-host` defaults to `0.0.0.0`. Set it to the machine's Tailscale IP
-(`tailscale ip -4`) so that only the tailnet can reach the phone listener.
-
-### Certificate
-
-The phone verifies the server certificate. It tries
-`/data/kaiforward/relay-ca.pem` first, then `ca.pem`, then the bundled public
-roots. The simplest setup is a self-signed certificate for the Tailscale IP:
-
-```sh
-openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 3650 \
-  -subj /CN=kaiforward-relay -addext "subjectAltName=IP:<tailscale-ip>" \
-  -keyout relay.key -out relay.crt
-adb push relay.crt /data/kaiforward/relay-ca.pem
-adb shell chmod 600 /data/kaiforward/relay-ca.pem
-```
-
-`python3 -m scripts.configure_native --relay-ca relay.crt --install` installs it
-too. A certificate from `tailscale cert` needs no `relay-ca.pem`, but the phone
-must then resolve the MagicDNS name.
-
-### Phone setting
-
-Set the phone's `relay_url` to `tls://<tailscale-ip>:8769` using any of these:
-- the keypad (**Settings → Call relay URL**)
-- `python3 -m scripts.settings_native set` with `{"relay_url":"tls://…"}`
-- `PATCH /v1/settings`
-
-The port defaults to 8769 when omitted. An empty `relay_url` disables the
-call relay. The SMS `url` is separate.
+`--phone-host` defaults to `0.0.0.0`. Set it to the machine's Tailscale IP so
+that only the tailnet can reach the phone listener. The server reads the token
+at startup, so restart it after rerunning the setup script.
 
 ## Browser access
 
@@ -85,7 +92,7 @@ After=network-online.target tailscaled.service
 Wants=network-online.target
 
 [Service]
-ExecStart=/usr/bin/python3 /path/to/kaiforward/call-relay/server.py --token-file /etc/kaiforward/token --certificate /etc/kaiforward/relay.crt --key /etc/kaiforward/relay.key --phone-host <tailscale-ip>
+ExecStart=/usr/bin/python3 /path/to/kaiforward/call-relay/server.py --token-file /path/to/kaiforward/data/call-relay-server/token --certificate /path/to/kaiforward/data/call-relay-server/relay.crt --key /path/to/kaiforward/data/call-relay-server/relay.key --phone-host <tailscale-ip>
 Restart=on-failure
 RestartSec=3
 UMask=0077
