@@ -14,7 +14,8 @@ PROJECT = Path(__file__).resolve().parents[1]
 
 
 def encode_config(values):
-    fields = ['ssid', 'password', 'url', 'token']
+    fields = ['ssid', 'password', 'url', 'token', 'relay_url']
+    values = {'relay_url': '', **values}
     if set(values) != set(fields) or not all(isinstance(v, str) for v in values.values()):
         raise ValueError('Invalid settings fields')
     if any(any(ord(c) < 32 or ord(c) == 127 for c in v) for v in values.values()):
@@ -32,6 +33,17 @@ def encode_config(values):
     for name, limit in [('url', 1024), ('token', 256)]:
         if not 1 <= len(values[name].encode()) <= limit:
             raise ValueError(name + ' is empty or too long')
+    relay_url = values['relay_url']
+    if relay_url:
+        relay = urlsplit(relay_url)
+        try:
+            port = relay.port
+        except ValueError:
+            port = 0
+        if relay.scheme != 'tls' or not relay.hostname or relay.username or port == 0 \
+                or relay.path or '?' in relay_url or '#' in relay_url \
+                or any(c in relay_url for c in ' "\\') or len(relay_url.encode()) > 256:
+            raise ValueError('Provide the call relay as tls://host[:port]')
     return ''.join(name + '=' + values[name] + '\n' for name in fields)
 
 
@@ -57,7 +69,7 @@ def install(directory, serial):
         raise ValueError('Native provisioning needs Gerda root ADB; current phone is not root')
     adb.shell('test -x /system/bin/kaiforward-native')
     adb.shell('mkdir -p /data/kaiforward && chmod 700 /data/kaiforward')
-    for name in ['config', 'ca.pem']:
+    for name in ['config', 'ca.pem', 'relay-ca.pem']:
         path = directory / name
         if path.exists():
             target = '/data/kaiforward/' + name
@@ -72,6 +84,8 @@ def main():
     parser.add_argument('--receiver-url', help='Complete URL, including /v1/messages')
     parser.add_argument('--receiver-config', type=Path, default=PROJECT / 'data/config.json', help='PC config containing the receiver token')
     parser.add_argument('--ca', type=Path, help='Trusted CA bundle, or certificate for a private HTTPS receiver')
+    parser.add_argument('--relay-url', help='Call relay server as tls://host[:port]; empty disables calls')
+    parser.add_argument('--relay-ca', type=Path, help='Certificate trusted for the call relay, when not publicly signed')
     parser.add_argument('--output', type=Path, default=PROJECT / 'data/native-settings')
     parser.add_argument('--install', action='store_true', help='Copy settings to an installed native Gerda phone')
     parser.add_argument('--serial')
@@ -86,7 +100,8 @@ def main():
     password = '' if password == 'OPEN' else password or existing.get('password', '')
     url = args.receiver_url or input('Receiver URL [' + existing.get('url', '') + ']: ') or existing.get('url', '')
     token = receiver.get('token') or existing.get('token') or getpass.getpass('Receiver token: ')
-    values = dict(ssid=ssid, password=password, url=url, token=token)
+    relay_url = existing.get('relay_url', '') if args.relay_url is None else args.relay_url
+    values = dict(ssid=ssid, password=password, url=url, token=token, relay_url=relay_url)
     write_private(args.output / 'config', encode_config(values))
     ca = args.ca
     if url.startswith('https://') and not ca and not (args.output / 'ca.pem').exists():
@@ -95,6 +110,8 @@ def main():
             raise ValueError('Provide --ca for this HTTPS destination')
     if ca:
         write_private(args.output / 'ca.pem', ca.read_text())
+    if args.relay_ca:
+        write_private(args.output / 'relay-ca.pem', args.relay_ca.read_text())
     if args.install:
         install(args.output, args.serial)
     print('Native settings ' + ('installed on phone' if args.install else 'saved to ' + str(args.output)) + '; credentials were not printed.')

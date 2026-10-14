@@ -95,7 +95,7 @@ class NativeSettingsTests(unittest.TestCase):
 
     def test_cli_partial_updates_private_storage_and_defaults(self):
         defaults = json.loads(self.command('--settings').stdout)
-        self.assertEqual(defaults, dict(ssid='', url='',
+        self.assertEqual(defaults, dict(ssid='', url='', relay_url='',
                                        password_set=False, token_set=False))
         values = dict(ssid='ঢাকা "home"', password='private=password',
                       url='https://example.org/v1/messages', token='private-token')
@@ -112,6 +112,10 @@ class NativeSettingsTests(unittest.TestCase):
         result = self.update({'url': 'https://example.org/v2/messages'})
         self.assertEqual(result['ssid'], values['ssid'])
         self.assertEqual(result['url'], 'https://example.org/v2/messages')
+        result = self.update({'relay_url': 'tls://100.64.0.1:8769'})
+        self.assertEqual(result['relay_url'], 'tls://100.64.0.1:8769')
+        self.assertEqual(result['url'], 'https://example.org/v2/messages')
+        self.assertIn('relay_url=tls://100.64.0.1:8769\n', (self.home / 'config').read_text())
         self.assertNotIn('device_id', result)
         self.assertIn('token=private-token\n', (self.home / 'config').read_text())
         wifi = self.command('--wifi-config').stdout
@@ -139,7 +143,11 @@ class NativeSettingsTests(unittest.TestCase):
                     dict(url='https://'), dict(url='http://?query'),
                     dict(url='https://user:pass@example.org'),
                     dict(url='https://example.org#fragment'), dict(url='http://host:65536'),
-                    dict(url='http://host:no'), dict(url='http://[bad]')]]
+                    dict(url='http://host:no'), dict(url='http://[bad]'),
+                    dict(relay_url='https://host'), dict(relay_url='host:8769'),
+                    dict(relay_url='tls://'), dict(relay_url='tls://host/path'),
+                    dict(relay_url='tls://host?x'), dict(relay_url='tls://host:0'),
+                    dict(relay_url='tls://user@host'), dict(relay_url='tls://' + 'x'*251)]]
         invalid += [' '*16385, '{"ssid":"nul\0byte"}']
         for data in invalid:
             with self.subTest(data=data[:100]):
@@ -153,10 +161,10 @@ class NativeSettingsTests(unittest.TestCase):
     def test_legacy_device_id_is_ignored_and_dropped_on_save(self):
         (self.home / 'config').write_text('ssid=home\npassword=password12\nurl=\ntoken=\ndevice_id=nokia-8110\n')
         self.assertEqual(json.loads(self.command('--settings').stdout),
-                         dict(ssid='home', url='', password_set=True, token_set=False))
+                         dict(ssid='home', url='', relay_url='', password_set=True, token_set=False))
         self.update({'token': 'new-token'})
         self.assertEqual((self.home / 'config').read_text(),
-                         'ssid=home\npassword=password12\nurl=\ntoken=new-token\n')
+                         'ssid=home\npassword=password12\nurl=\ntoken=new-token\nrelay_url=\n')
 
     def test_corrupt_config_and_busy_lock_are_not_overwritten(self):
         (self.home / 'config').write_text('unrecognized=private\n')
@@ -180,9 +188,11 @@ class NativeSettingsTests(unittest.TestCase):
         self.assertNotIn('secret-password', json.dumps(data))
         self.assertNotIn('receiver-token', json.dumps(data))
         self.assertTrue(data['token_set'])
-        status, data = self.request('PATCH', json.dumps(dict(ssid='new-home', url='http://host:8080/sms')))
+        status, data = self.request('PATCH', json.dumps(dict(ssid='new-home', url='http://host:8080/sms',
+                                                             relay_url='tls://[fd7a:115c:a1e0::1]:9000')))
         self.assertEqual(status, 200)
         self.assertEqual(data['url'], 'http://host:8080/sms')
+        self.assertEqual(data['relay_url'], 'tls://[fd7a:115c:a1e0::1]:9000')
         self.assertIn('password=secret-password\n', (self.home / 'config').read_text())
         self.assertEqual(self.request('PATCH', '{"token":"new-token"}')[0], 200)
         self.assertEqual(self.request()[1], json.loads(self.command('--settings').stdout))

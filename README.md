@@ -56,9 +56,12 @@ For example, `settings.json` can contain:
 {"ssid":"Your Wi-Fi","password":"your-password"}
 ```
 
-The writable fields are `ssid`, `password`, `url` and `token`.
+The writable fields are `ssid`, `password`, `url`, `token` and `relay_url`.
+`url` is the SMS receiver (`https://…/v1/messages`); `relay_url` is the
+[call relay server](call-relay/README.md) (`tls://host[:port]`).
 Omitted fields keep their current values. Empty `password` selects an open
-network; empty `url` or `token` disables forwarding. Reads and update responses
+network; empty `url` or `token` disables forwarding, and empty `relay_url`
+disables the call relay. Reads and update responses
 hide credentials and report `password_set` and `token_set` instead. Add
 `--serial <serial>` before `get`, `set`, or `key` to select a phone.
 

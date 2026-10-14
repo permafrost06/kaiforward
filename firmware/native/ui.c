@@ -100,7 +100,8 @@ static void backlight(int on) {
         close(fd);
     }
 }
-static const char *names[] = {"Wi-Fi network", "Wi-Fi password", "Receiver URL", "Receiver token"};
+static const char *names[] = {"Wi-Fi network", "Wi-Fi password", "SMS receiver URL",
+                               "Receiver token", "Call relay URL"};
 static char *field(Config *c, int item) {
     switch (item) {
     case 0:
@@ -109,8 +110,10 @@ static char *field(Config *c, int item) {
         return c->password;
     case 2:
         return c->url;
-    default:
+    case 3:
         return c->token;
+    default:
+        return c->relay_url;
     }
 }
 static size_t capacity(int item) {
@@ -122,7 +125,7 @@ static size_t capacity(int item) {
     case 2:
         return 1025;
     default:
-        return 257;
+        return 257; /* token and relay URL */
     }
 }
 static WifiNetwork networks[KF_NETWORKS];
@@ -179,7 +182,7 @@ static void render(const char *home, int page, int item, int editing, int mode, 
         label(8, 298, "Manual               Back", 1, 0x6de3aa);
     } else if (!editing) {
         label(8, 73, "Settings", 1, 0xbbcbd5);
-        for (int i = 0; i < 4; i++) {
+        for (int i = 0; i < 5; i++) {
             if (i == item)
                 rect(4, 99 + i * 31, 232, 28, 0x153a4b);
             label(8, 104 + i * 31, names[i], 1, 0xffffff);
@@ -406,9 +409,9 @@ void ui_run(const char *home, const char *preview) {
                     }
                     if (!editing) {
                         if (key == 103)
-                            item = (item + 3) % 4;
+                            item = (item + 4) % 5;
                         else if (key == 108)
-                            item = (item + 1) % 4;
+                            item = (item + 1) % 5;
                         else if (key == 158 || key == 116)
                             page = 0;
                         else if (key == 352 || key == 28) {

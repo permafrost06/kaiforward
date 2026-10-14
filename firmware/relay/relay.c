@@ -79,29 +79,32 @@ static int control(const char *home, const char *command, char *reply, size_t ca
         reply[--n] = 0;
     return 0;
 }
-static int host_from_url(const char *url, char *host, size_t cap) {
-    const char *start = strstr(url, "://");
-    if (!start)
-        return -1;
-    start += 3;
-    size_t n = strcspn(start, "/:");
-    if (!n || n >= cap)
-        return -1;
-    memcpy(host, start, n);
-    host[n] = 0;
-    return 0;
-}
-static int session(const char *home, const char *override, const char *port, const char *ca_file) {
+static int session(const char *home, const char *override, const char *port_override,
+                   const char *ca_override) {
     Config config;
     if (config_load(home, &config))
         return -1;
-    char host[256];
-    if (override) {
-        if (strlen(override) >= sizeof(host))
-            return -1;
-        strcpy(host, override);
-    } else if (host_from_url(config.url, host, sizeof(host)))
+    /* An empty relay URL disables the relay unless --server is given. */
+    char host[256], port[8] = "8769", ca_file[1200];
+    if (relay_address(config.relay_url, host, sizeof(host), port, sizeof(port)) && !override)
         return -1;
+    if ((override && strlen(override) >= sizeof(host)) ||
+        (port_override && strlen(port_override) >= sizeof(port)))
+        return -1;
+    if (override)
+        strcpy(host, override);
+    if (port_override)
+        strcpy(port, port_override);
+    /* A private relay CA must not replace the public bundle used for SMS uploads. */
+    if (ca_override)
+        snprintf(ca_file, sizeof(ca_file), "%s", ca_override);
+    else {
+        snprintf(ca_file, sizeof(ca_file), "%s/relay-ca.pem", home);
+        if (access(ca_file, R_OK))
+            snprintf(ca_file, sizeof(ca_file), "%s/ca.pem", home);
+        if (access(ca_file, R_OK))
+            snprintf(ca_file, sizeof(ca_file), "/system/kaiforward/ca.pem");
+    }
     mbedtls_net_context network;
     mbedtls_net_init(&network);
     mbedtls_ssl_context ssl;
@@ -152,6 +155,11 @@ static int session(const char *home, const char *override, const char *port, con
         if (monotonic_ms() - last_receive > 8000)
             goto cleanup;
         if (authenticated && monotonic_ms() >= next_status) {
+            /* Reconnect with the new destination after a settings change. */
+            Config latest;
+            if (config_load(home, &latest) || strcmp(latest.relay_url, config.relay_url) ||
+                strcmp(latest.token, config.token))
+                goto cleanup;
             for (int i = 0; i < 2; i++) {
                 char command[24];
                 snprintf(command, sizeof(command), "%d status", i + 1);
@@ -299,7 +307,7 @@ cleanup:
     return rc;
 }
 int main(int argc, char **argv) {
-    const char *home = KF_HOME, *server = NULL, *port = "8769", *ca = NULL;
+    const char *home = KF_HOME, *server = NULL, *port = NULL, *ca = NULL;
     int once = 0;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--home") && i + 1 < argc)
@@ -314,11 +322,6 @@ int main(int argc, char **argv) {
             once = 1;
         else
             return 2;
-    }
-    char ca_path[1200];
-    if (!ca) {
-        snprintf(ca_path, sizeof(ca_path), "%s/ca.pem", home);
-        ca = ca_path;
     }
     int lock = service_lock(home, "relay");
     if (lock < 0)

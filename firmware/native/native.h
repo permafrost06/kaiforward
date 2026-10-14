@@ -14,7 +14,7 @@ typedef struct {
     int signal, security; /* 0 open, 1 WPA PSK, 2 unsupported */
 } WifiNetwork;
 typedef struct {
-    char ssid[129], password[129], url[1025], token[257];
+    char ssid[129], password[129], url[1025], token[257], relay_url[257];
 } Config;
 typedef struct {
     char sender[129], body[KF_TEXT];
@@ -51,6 +51,7 @@ int service_lock(const char *home, const char *name);
 int config_load(const char *home, Config *c);
 int config_save(const char *home, const Config *c);
 int config_valid(const Config *c);
+int relay_address(const char *url, char *host, size_t host_cap, char *port, size_t port_cap);
 int settings_read(const char *home, char *json, size_t cap);
 int settings_update(sqlite3 *db, const char *home, const char *json);
 int settings_key(const char *home, char key[65]);

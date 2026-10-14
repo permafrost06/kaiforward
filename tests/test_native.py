@@ -197,6 +197,19 @@ class NativeTests(unittest.TestCase):
         for bad in [b'{}', b'{"accepted":[]}', b'{"accepted":["wrong"]}', b'{"accepted":["1000000001:1791873296000","extra"]}', b'{"accepted":["1000000001:1791873296000"]}trailing']:
             self.assertEqual(self.lib.ack_valid(bad, key), 0)
 
+    def test_relay_address_from_relay_url(self):
+        def address(url):
+            host, port = ctypes.create_string_buffer(256), ctypes.create_string_buffer(8)
+            if self.lib.relay_address(url.encode(), host, 256, port, 8):
+                return None
+            return host.value.decode(), port.value.decode()
+        self.assertEqual(address('tls://100.64.0.1'), ('100.64.0.1', '8769'))
+        self.assertEqual(address('tls://relay.tailnet.ts.net:9000'), ('relay.tailnet.ts.net', '9000'))
+        self.assertEqual(address('tls://[fd7a:115c:a1e0::1]:9000'), ('fd7a:115c:a1e0::1', '9000'))
+        self.assertEqual(address('tls://[fd7a:115c:a1e0::1]'), ('fd7a:115c:a1e0::1', '8769'))
+        for bad in ['', 'https://host', 'tls://', 'tls://host/', 'tls://host:', 'tls://host:99999']:
+            self.assertIsNone(address(bad), bad)
+
     def test_native_settings_and_wifi_escaping(self):
         values = dict(ssid='test"wifi', password='password"12', url='https://example.org/v1/messages', token='test-token')
         encoded = configure.encode_config(values)
@@ -204,7 +217,10 @@ class NativeTests(unittest.TestCase):
         result = subprocess.run([str(self.binary), '--home', str(self.home), '--wifi-config'], capture_output=True, text=True, check=True)
         self.assertIn('ssid="test\\"wifi"', result.stdout)
         self.assertIn('psk="password\\"12"', result.stdout)
-        for name, value in [('password', 'short'), ('url', 'file:///tmp/x'), ('token', 'bad\nheader'), ('ssid', 'x'*33)]:
+        self.assertIn('relay_url=\n', encoded)
+        self.assertIn('relay_url=tls://relay.example:9000\n', configure.encode_config(dict(values, relay_url='tls://relay.example:9000')))
+        for name, value in [('password', 'short'), ('url', 'file:///tmp/x'), ('token', 'bad\nheader'), ('ssid', 'x'*33),
+                            ('relay_url', 'https://relay.example'), ('relay_url', 'tls://relay.example/path'), ('relay_url', 'tls://relay.example:70000')]:
             bad = dict(values, **{name: value})
             with self.assertRaises(ValueError):
                 configure.encode_config(bad)

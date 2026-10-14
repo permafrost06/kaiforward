@@ -12,7 +12,7 @@
 #define CLIENTS 8
 #define HEADER_LIMIT 4096
 #define BODY_LIMIT 16384
-#define RESPONSE_LIMIT 8192
+#define RESPONSE_LIMIT 10240
 
 typedef struct {
     int fd, writing;
@@ -234,7 +234,7 @@ static void request(Client *c, const char *home, sqlite3 *db) {
         return;
     }
     int result = patch ? settings_update(db, home, c->input + header_size) : 0;
-    char body[7600];
+    char body[9600];
     if (result)
         respond(c, result, NULL);
     else if (settings_read(home, body, sizeof(body)))

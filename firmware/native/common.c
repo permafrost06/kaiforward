@@ -102,14 +102,20 @@ static int safe(const char *s) {
     }
     return 1;
 }
-static int receiver_url_valid(const char *url) {
+/* Receiver URLs are http(s)://; relay URLs are tls://host[:port] without a path. */
+static int url_valid(const char *url, int relay) {
     if (!*url)
         return 1;
-    const char *host = !strncmp(url, "https://", 8) ? url + 8 :
-                       !strncmp(url, "http://", 7) ? url + 7 : NULL;
+    const char *host = NULL;
+    if (relay)
+        host = !strncmp(url, "tls://", 6) ? url + 6 : NULL;
+    else
+        host = !strncmp(url, "https://", 8) ? url + 8 : !strncmp(url, "http://", 7) ? url + 7 : NULL;
     if (!host || strchr(url, '#'))
         return 0;
     const char *end = host + strcspn(host, "/?");
+    if (relay && *end)
+        return 0;
     if (memchr(host, '@', (size_t)(end - host)))
         return 0;
     const char *port = NULL;
@@ -153,7 +159,8 @@ static int receiver_url_valid(const char *url) {
     return 1;
 }
 int config_valid(const Config *c) {
-    if (!safe(c->ssid) || !safe(c->password) || !safe(c->url) || !safe(c->token))
+    if (!safe(c->ssid) || !safe(c->password) || !safe(c->url) || !safe(c->token) ||
+        !safe(c->relay_url))
         return 0;
     if (strlen(c->ssid) > 32)
         return 0;
@@ -166,11 +173,32 @@ int config_valid(const Config *c) {
                 return 0;
     }
     /* Empty destination is allowed during setup; upload requires URL and token. */
-    if (!receiver_url_valid(c->url))
+    if (!url_valid(c->url, 0) || !url_valid(c->relay_url, 1))
         return 0;
-    if (strpbrk(c->url, " \"\\") || strpbrk(c->token, " \"\\"))
+    if (strpbrk(c->url, " \"\\") || strpbrk(c->token, " \"\\") || strpbrk(c->relay_url, " \"\\"))
         return 0;
     return 1;
+}
+int relay_address(const char *url, char *host, size_t host_cap, char *port, size_t port_cap) {
+    if (!*url || !url_valid(url, 1))
+        return -1;
+    const char *start = url + 6, *colon;
+    size_t n;
+    if (*start == '[') {
+        start++;
+        n = strcspn(start, "]");
+        colon = start[n + 1] == ':' ? start + n + 1 : NULL;
+    } else {
+        colon = strchr(start, ':');
+        n = colon ? (size_t)(colon - start) : strlen(start);
+    }
+    const char *number = colon ? colon + 1 : "8769";
+    if (n >= host_cap || strlen(number) >= port_cap)
+        return -1;
+    memcpy(host, start, n);
+    host[n] = 0;
+    strcpy(port, number);
+    return 0;
 }
 int config_load(const char *home, Config *c) {
     memset(c, 0, sizeof(*c));
@@ -204,7 +232,7 @@ int config_load(const char *home, Config *c) {
         cap = sizeof(c->n);                                                                        \
     }
         FIELD(ssid)
-        else FIELD(password) else FIELD(url) else FIELD(token)
+        else FIELD(password) else FIELD(url) else FIELD(token) else FIELD(relay_url)
 #undef FIELD
             if (!dest || strlen(v) >= cap) {
             fclose(f);
@@ -219,10 +247,10 @@ int config_load(const char *home, Config *c) {
 int config_save(const char *home, const Config *c) {
     if (!config_valid(c))
         return -1;
-    char path[1200], buf[2200];
+    char path[1200], buf[2600];
     snprintf(path, sizeof(path), "%s/config", home);
-    snprintf(buf, sizeof(buf), "ssid=%s\npassword=%s\nurl=%s\ntoken=%s\n", c->ssid,
-             c->password, c->url, c->token);
+    snprintf(buf, sizeof(buf), "ssid=%s\npassword=%s\nurl=%s\ntoken=%s\nrelay_url=%s\n", c->ssid,
+             c->password, c->url, c->token, c->relay_url);
     return atomic_write(path, buf);
 }
 int json_string(char *out, size_t cap, const char *s) {
