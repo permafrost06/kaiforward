@@ -85,6 +85,11 @@ can disconnect a direct HTTP session. Initial HTTPS receiver certificates
 still use `scripts.configure_native --ca`; see the
 [firmware settings reference](firmware/README.md#settings-api).
 
+## Call relay server
+
+Browser call control runs on a separate server reachable over Tailscale, not
+on Convex. See [`call-relay/`](call-relay/README.md).
+
 ## Install Tailscale
 
 On native KaiForward firmware with root ADB and working Wi-Fi, run:
