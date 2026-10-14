@@ -65,8 +65,9 @@ disables the call relay. Reads and update responses
 hide credentials and report `password_set` and `token_set` instead. Add
 `--serial <serial>` before `get`, `set`, or `key` to select a phone.
 
-The phone also serves `GET /v1/settings` and `PATCH /v1/settings` on port 8768.
-Both require a separate settings access key. Retrieve it over root ADB, then
+The phone also serves `GET /v1/settings`, `PATCH /v1/settings`, and a read-only
+`GET /v1/status` (battery, Wi-Fi, SIMs, calls, and SMS queues) on port 8768.
+All require a separate settings access key. Retrieve it over root ADB, then
 forward the HTTP port to your PC:
 
 ```sh
@@ -76,6 +77,7 @@ adb forward tcp:8768 tcp:8768
 curl -H @settings-http.header http://127.0.0.1:8768/v1/settings
 curl -X PATCH -H @settings-http.header -H 'Content-Type: application/json' \
   --data-binary @settings.json http://127.0.0.1:8768/v1/settings
+curl -H @settings-http.header http://127.0.0.1:8768/v1/status
 ```
 
 For direct Wi-Fi access, replace `127.0.0.1` with the phone's IP. HTTP is
@@ -84,6 +86,27 @@ reboot and request Wi-Fi reload and upload sync automatically. Changing Wi-Fi
 can disconnect a direct HTTP session. Initial HTTPS receiver certificates
 still use `scripts.configure_native --ca`; see the
 [firmware settings reference](firmware/README.md#settings-api).
+
+### HTTP access key
+
+The phone generates the key itself the first time the SMS service starts: 32
+random bytes saved as 64 hex characters in `/data/kaiforward/settings.key`. It
+persists across reboot and runtime updates and is independent of the receiver
+token. Print it with `python3 -m scripts.settings_native key`, then send it as
+`Authorization: Bearer <key>`.
+
+To rotate it, stop the service before removing the file, since the running
+service only reads the key at startup:
+
+```sh
+adb shell stop kaiforward-sms
+adb shell rm /data/kaiforward/settings.key
+adb shell start kaiforward-sms
+umask 077
+python3 -m scripts.settings_native key | sed 's/^/Authorization: Bearer /' > settings-http.header
+```
+
+The old key stops working once the service restarts.
 
 ## Call relay server
 

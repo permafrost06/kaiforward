@@ -15,7 +15,7 @@
 #define RESPONSE_LIMIT 10240
 
 typedef struct {
-    int fd, writing;
+    int fd, writing, read_only;
     int64_t deadline;
     size_t used, length, sent;
     char input[HEADER_LIMIT + BODY_LIMIT + 1];
@@ -83,8 +83,9 @@ static void respond(Client *c, int status, const char *body) {
                          : status == 415 ? "Unsupported Media Type"
                                          : "Internal Server Error";
     const char *extra = status == 401   ? "WWW-Authenticate: Bearer\r\n"
-                        : status == 405 ? "Allow: GET, PATCH\r\n"
-                                        : "";
+                        : status != 405 ? ""
+                        : c->read_only  ? "Allow: GET\r\n"
+                                        : "Allow: GET, PATCH\r\n";
     if (!body)
         body = status == 400   ? "{\"error\":\"invalid settings request\"}\n"
                : status == 401 ? "{\"error\":\"settings access key required\"}\n"
@@ -123,7 +124,7 @@ static int authorized(const char *value) {
     return diff == 0;
 }
 
-static void request(Client *c, const char *home, sqlite3 *db) {
+static void request(Client *c, const char *home, sqlite3 *db, const Radio radios[2]) {
     char *end = strstr(c->input, "\r\n\r\n");
     if (!end) {
         if (c->used >= HEADER_LIMIT)
@@ -210,11 +211,12 @@ static void request(Client *c, const char *home, sqlite3 *db) {
         respond(c, 401, NULL);
         return;
     }
-    if (strcmp(path, "/v1/settings")) {
+    c->read_only = !strcmp(path, "/v1/status");
+    if (!c->read_only && strcmp(path, "/v1/settings")) {
         respond(c, 404, NULL);
         return;
     }
-    int patch = !strcmp(method, "PATCH");
+    int patch = !c->read_only && !strcmp(method, "PATCH");
     if (!patch && strcmp(method, "GET")) {
         respond(c, 405, NULL);
         return;
@@ -233,8 +235,15 @@ static void request(Client *c, const char *home, sqlite3 *db) {
         respond(c, 400, NULL);
         return;
     }
-    int result = patch ? settings_update(db, home, c->input + header_size) : 0;
     char body[9600];
+    if (c->read_only) {
+        if (status_read(home, db, radios, body, sizeof(body)))
+            respond(c, 500, "{\"error\":\"status unavailable\"}\n");
+        else
+            respond(c, 200, body);
+        return;
+    }
+    int result = patch ? settings_update(db, home, c->input + header_size) : 0;
     if (result)
         respond(c, result, NULL);
     else if (settings_read(home, body, sizeof(body)))
@@ -243,7 +252,7 @@ static void request(Client *c, const char *home, sqlite3 *db) {
         respond(c, 200, body);
 }
 
-void settings_http_tick(const char *home, sqlite3 *db) {
+void settings_http_tick(const char *home, sqlite3 *db, const Radio radios[2]) {
     if (listener < 0)
         return;
     for (int i = 0; i < CLIENTS; i++) {
@@ -262,7 +271,7 @@ void settings_http_tick(const char *home, sqlite3 *db) {
                 } else {
                     c->used += (size_t)n;
                     c->input[c->used] = 0;
-                    request(c, home, db);
+                    request(c, home, db, radios);
                 }
             } else if (!n || (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)) {
                 close_client(c);

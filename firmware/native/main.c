@@ -16,21 +16,6 @@ static void stop(int sig) {
     (void)sig;
     running = 0;
 }
-static const char *sim_label(Radio *r) {
-    if (r->fd < 0)
-        return "disconnected";
-    if (r->sim == 0)
-        return "absent";
-    if (r->sim == 2)
-        return "SIM error";
-    if (r->active_app == 2 || r->active_app == 3)
-        return "PIN/PUK locked";
-    if (r->sim != 1 || r->active_app != 5)
-        return "checking SIM";
-    if (r->registered == 1 && r->radio == 10)
-        return "registered";
-    return "searching";
-}
 static void quoted(FILE *f, const char *s) {
     fputc('"', f);
     for (; *s; s++) {
@@ -256,7 +241,7 @@ int main(int argc, char **argv) {
             if (fds[2].revents & POLLIN)
                 call_accept(controller, radios);
         }
-        settings_http_tick(home, db);
+        settings_http_tick(home, db, radios);
         int current_queued = store_count(db, "messages", "uploaded=0");
         if (current_queued > previous_queued) {
             char syncpath[1200];
@@ -279,7 +264,7 @@ int main(int argc, char **argv) {
             snprintf(status, sizeof(status),
                      "SIM 1: %s\nSIM 2: %s\nQueued: %d  Received: %d\nReview: %d / Waiting: "
                      "%d\n%lld\n%s\n",
-                     sim_label(&radios[0]), sim_label(&radios[1]), queued, received, blocked, parts,
+                     radio_label(&radios[0]), radio_label(&radios[1]), queued, received, blocked, parts,
                      (long long)now_ms(), call);
             atomic_write(path, status);
             next = monotonic_ms() + 5000;

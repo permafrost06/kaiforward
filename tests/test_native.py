@@ -237,9 +237,12 @@ class NativeTests(unittest.TestCase):
         self.addCleanup(server.close)
         commands = []
         def respond():
-            for _ in range(2):
+            replies = {b'STATUS': b'bssid=aa:00:00:00:00:02\nfreq=2412\nssid=Cafe WiFi\n'
+                                  b'id=0\nwpa_state=COMPLETED\nip_address=192.168.0.9\n',
+                       b'SIGNAL_POLL': b'RSSI=-41\nLINKSPEED=65\nNOISE=9999\nFREQUENCY=2412\n'}
+            for _ in range(4):
                 command, sender = server.recvfrom(1024);commands.append(command)
-                response = (b'bssid / frequency / signal level / flags / ssid\n'
+                response = replies.get(command) or (b'bssid / frequency / signal level / flags / ssid\n'
                             b'aa:00:00:00:00:01\t2412\t-75\t[WPA2-PSK-CCMP][ESS]\tCafe\\x20WiFi\n'
                             b'aa:00:00:00:00:02\t2412\t-40\t[WPA2-PSK-CCMP][ESS]\tCafe\\x20WiFi\n'
                             b'aa:00:00:00:00:03\t2412\t-60\t[ESS]\tOpen network\n'
@@ -252,7 +255,8 @@ class NativeTests(unittest.TestCase):
         self.lib.wifi_scan.restype = ctypes.c_int
         self.assertEqual(self.lib.wifi_scan(os.fsencode(self.home), os.fsencode(path)), 0)
         thread.join(3)
-        self.assertEqual(commands, [b'SCAN_RESULTS', b'SCAN'])
+        self.assertEqual(commands, [b'STATUS', b'SIGNAL_POLL', b'SCAN_RESULTS', b'SCAN'])
+        self.assertEqual((self.home / 'wifi.link').read_text(), 'COMPLETED\t-41\t65\t2412\tCafe WiFi\n')
         self.assertEqual((self.home / 'wifi.scan').read_text(),
                          '-40\t1\tCafe WiFi\n-60\t0\tOpen network\n-70\t2\tEnterprise\n')
         self.assertEqual(list(self.home.glob('wlan0.kf-*')), [])

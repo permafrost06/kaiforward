@@ -212,6 +212,37 @@ class NativeSettingsTests(unittest.TestCase):
         self.assertEqual(self.request()[1]['ssid'], 'new-home')
         self.assertIsNone(self.process.poll())
 
+    def test_http_status_reports_radios_queues_and_upload_state(self):
+        self.update(dict(ssid='home', url='http://host/sms', token='receiver-token'))
+        subprocess.run([str(self.binary), '--home', str(self.home), '--send', '2', '12345', 'hi'],
+                       check=True, capture_output=True)
+        (self.home / 'wifi.link').write_text('COMPLETED\t-52\t72\t2437\tHome Net\n')
+        (self.home / 'upload.status').write_text('1700000000000\nRETRYING / CHECK SETUP\n')
+        self.start()
+        self.assertEqual(self.request(path='/v1/status', auth=False)[0], 401)
+        status, data = self.request(path='/v1/status')
+        self.assertEqual(status, 200)
+        self.assertNotIn('receiver-token', json.dumps(data))
+        self.assertEqual(set(data), {'time', 'uptime', 'battery', 'wifi', 'sims', 'call',
+                                     'messages', 'upload'})
+        self.assertEqual(set(data['battery']), {'level', 'status', 'charging', 'plugged',
+                                                'temperature', 'voltage_mv'})
+        # No wlan0 carrier on the test host, so link metrics are withheld.
+        self.assertEqual(data['wifi'], {'connected': False, 'configured_ssid': 'home',
+                                        'state': 'completed', 'ssid': 'Home Net', 'ip': None,
+                                        'signal_dbm': None, 'link_mbps': None,
+                                        'frequency_mhz': None})
+        self.assertEqual([(s['slot'], s['state'], s['connected'], s['call']) for s in data['sims']],
+                         [(1, 'disconnected', False, 'idle'), (2, 'disconnected', False, 'idle')])
+        self.assertEqual(data['call'], {'active': False, 'slot': None, 'state': 'idle',
+                                        'incoming': False})
+        self.assertEqual(data['messages']['outbox']['queued'], 1)
+        self.assertEqual(data['messages']['pending_upload'], 0)
+        self.assertEqual(data['upload'], {'configured': True, 'state': 'retrying',
+                                          'updated': 1700000000000})
+        self.assertEqual(self.request('PATCH', '{"ssid":"x"}', path='/v1/status')[0], 405)
+        self.assertEqual(self.request()[1]['ssid'], 'home')
+
     def test_http_rejects_ambiguous_or_oversize_requests_and_handles_fragments(self):
         self.start()
         prefix = ('PATCH /v1/settings HTTP/1.1\r\nAuthorization: Bearer ' + self.key +

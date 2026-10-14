@@ -102,6 +102,36 @@ static int control(int fd, const char *command, char *reply, size_t cap) {
     reply[n] = 0;
     return 0;
 }
+static void field(const char *reply, const char *name, char *out, size_t cap) {
+    size_t n = strlen(name);
+    *out = 0;
+    while (*reply) {
+        size_t len = strcspn(reply, "\r\n");
+        if (len > n && !strncmp(reply, name, n) && reply[n] == '=') {
+            snprintf(out, cap, "%.*s", (int)(len - n - 1), reply + n + 1);
+            return;
+        }
+        reply += len;
+        reply += strspn(reply, "\r\n");
+    }
+}
+/* /proc/net/wireless stays zero on this driver; ask the supplicant instead. */
+static void wifi_link(const char *home, int fd) {
+    char status[4096], poll[512], state[40], ssid[200], rssi[16], speed[16], freq[16];
+    char line[400], path[1200];
+    if (control(fd, "STATUS", status, sizeof(status)))
+        return;
+    field(status, "wpa_state", state, sizeof(state));
+    field(status, "ssid", ssid, sizeof(ssid));
+    if (control(fd, "SIGNAL_POLL", poll, sizeof(poll)) || !strncmp(poll, "FAIL", 4))
+        poll[0] = 0;
+    field(poll, "RSSI", rssi, sizeof(rssi));
+    field(poll, "LINKSPEED", speed, sizeof(speed));
+    field(poll, "FREQUENCY", freq, sizeof(freq));
+    snprintf(line, sizeof(line), "%s\t%s\t%s\t%s\t%s\n", state, rssi, speed, freq, ssid);
+    snprintf(path, sizeof(path), "%s/wifi.link", home);
+    atomic_write(path, line);
+}
 int wifi_scan(const char *home, const char *socket_path) {
     struct sockaddr_un local = {0}, remote = {0};
     local.sun_family = remote.sun_family = AF_UNIX;
@@ -124,6 +154,7 @@ int wifi_scan(const char *home, const char *socket_path) {
         goto done;
     if (chmod(local.sun_path, 0660) || connect(fd, (struct sockaddr *)&remote, sizeof(remote)))
         goto done;
+    wifi_link(home, fd);
     /* Results are from the previous asynchronous scan. Never block the UI. */
     if (control(fd, "SCAN_RESULTS", reply, sizeof(reply)))
         goto done;

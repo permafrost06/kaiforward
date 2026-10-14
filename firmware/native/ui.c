@@ -63,26 +63,6 @@ static void file_line(const char *home, const char *name, char *out, size_t cap,
     fclose(f);
     out[strcspn(out, "\r\n")] = 0;
 }
-static int battery(void) {
-    FILE *f = fopen("/sys/class/power_supply/battery/capacity", "r");
-    int n = -1;
-    if (f) {
-        if (fscanf(f, "%d", &n) != 1)
-            n = -1;
-        fclose(f);
-    }
-    return n;
-}
-static int wifi(void) {
-    FILE *f = fopen("/sys/class/net/wlan0/carrier", "r");
-    int n = 0;
-    if (f) {
-        if (fscanf(f, "%d", &n) != 1)
-            n = 0;
-        fclose(f);
-    }
-    return n;
-}
 static void backlight(int on) {
     const char *brightness = "/sys/class/leds/lcd-backlight/brightness";
     FILE *f = fopen("/sys/class/leds/lcd-backlight/max_brightness", "r");
@@ -140,12 +120,12 @@ static void render(const char *home, int page, int item, int editing, int mode, 
     (void)c;
     memset(pixels, 0, sizeof(pixels));
     char line[150], status[120];
-    int b = battery();
+    int b = battery_level();
     snprintf(line, sizeof(line), b < 0 ? "Battery --" : "Battery %d%%", b);
     label(8, 46, line, 1, 0xbbcbd5);
     if (!page) {
-        label(8, 74, wifi() ? "Wi-Fi connected" : "Wi-Fi disconnected", 1,
-              wifi() ? 0x6de3aa : 0xffc66d);
+        label(8, 74, wifi_connected() ? "Wi-Fi connected" : "Wi-Fi disconnected", 1,
+              wifi_connected() ? 0x6de3aa : 0xffc66d);
         file_line(home, "radio.status", status, sizeof(status), 0);
         label(8, 103, status, 1, 0xffffff);
         file_line(home, "radio.status", status, sizeof(status), 1);

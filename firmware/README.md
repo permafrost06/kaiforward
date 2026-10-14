@@ -175,6 +175,31 @@ It is independent of the receiver token. To rotate it, stop `kaiforward-sms`,
 remove `settings.key` over root ADB, and start the service; retrieve the new key
 with `scripts.settings_native key`.
 
+`GET /v1/status` uses the same key and returns live phone state as JSON;
+other methods return 405. Values the phone cannot read are `null`.
+
+- `time` (Unix ms) and `uptime` (seconds).
+- `battery`: `level` (percent), `status` (`charging`, `discharging`, `full`,
+  `not charging`), `charging`, `plugged` (`usb`, `ac`, or `null`),
+  `temperature` (°C), and `voltage_mv`.
+- `wifi`: `connected` (wlan0 carrier), `configured_ssid`, the supplicant's
+  `state` (such as `completed` or `scanning`) and associated `ssid`, `ip`,
+  `signal_dbm`, `link_mbps`, and `frequency_mhz`. The driver leaves
+  `/proc/net/wireless` empty, so `--scan-wifi` saves wpa_supplicant `STATUS`
+  and `SIGNAL_POLL` results to `wifi.link` about every 10 seconds; results
+  older than a minute are ignored.
+- `sims`: one object per slot with `state` (the label shown on screen, such as
+  `registered`, `searching`, `absent`, or `disconnected`), `connected` (rild
+  socket), `radio_on`, `sim` (`ready`, `pin`, `puk`, `absent`, `error`,
+  `initializing`, `unknown`), `registered`, and `call`.
+- `call`: `active`, `slot`, `state` (`idle`, `active`, `holding`, `dialing`,
+  `alerting`, `incoming`, `waiting`), and `incoming`. Numbers are not exposed.
+- `messages`: `pending_upload`, `received`, `sent`, `undecoded` raw PDUs,
+  `incomplete` multipart groups, and `outbox` counts by status (`queued`,
+  `submitting`, `sent`, `failed`, `uncertain`).
+- `upload`: `configured` (URL and token set), `state` (`idle`, `syncing`,
+  `retrying`), and `updated`, the uploader's last status time in Unix ms.
+
 See the [ADB and curl examples](../README.md#change-settings-over-adb-or-http).
 HTTP has no TLS, so use an ADB forward or a trusted LAN. A Wi-Fi change can
 disconnect a LAN client before it receives the response; read settings after
