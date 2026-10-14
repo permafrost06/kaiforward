@@ -55,3 +55,9 @@ service kf-tailscale /system/bin/sh /system/kaiforward/tailscale.sh
     class main
     user root
     group root inet net_raw net_admin
+
+# Key-only root SSH; dormant until provisioned over ADB.
+service kf-ssh /system/bin/sh /system/kaiforward/ssh.sh
+    class main
+    user root
+    group root inet

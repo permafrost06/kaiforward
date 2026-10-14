@@ -21,6 +21,7 @@ PAYLOAD = {
     'kaiforward-native': ('/system/bin/kaiforward-native', '755'),
     'wifi.sh': ('/system/kaiforward/wifi.sh', '755'),
     'tailscale.sh': ('/system/kaiforward/tailscale.sh', '755'),
+    'ssh.sh': ('/system/kaiforward/ssh.sh', '755'),
     'udhcpc.sh': ('/system/kaiforward/udhcpc.sh', '755'),
     'dhcp-native.conf': ('/system/etc/dhcpcd/dhcpcd-hooks/99-kaiforward.conf', '644'),
     'FONT-LICENSE.txt': ('/system/kaiforward/FONT-LICENSE.txt', '644'),

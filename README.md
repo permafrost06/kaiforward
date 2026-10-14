@@ -107,6 +107,19 @@ Use `--serial <serial>` before the subcommand when several phones are connected.
 See [the firmware instructions](firmware/README.md#tailscale-startup) for offline
 installation, rollback and the Wi-Fi routing integration.
 
+## SSH on custom firmware
+
+Install key-only root SSH with persistent host keys and boot startup:
+
+```sh
+python3 -m scripts.ssh install --public-key /path/to/key.pub
+ssh root@<phone-ip>
+```
+
+Use the phone's Wi-Fi or Tailscale address. The installer saves a verified boot
+backup and prints rollback instructions; it never reboots. See the
+[SSH reference](firmware/README.md#ssh-access) for USB access and management.
+
 ## Root access
 
 Reading partitions needs root on the phone. Custom firmware such as the Gerda

@@ -15,15 +15,16 @@ SERVICE = b'''service kf-tailscale /system/bin/sh /system/kaiforward/tailscale.s
 '''
 
 
-def startup_with_tailscale(content):
+def startup_with_service(content, service=SERVICE):
     """Preserve existing startup definitions; reject a conflicting service."""
-    pattern = rb'(?m)^service kf-tailscale[^\n]*\n(?:[ \t]+[^\n]*\n)*'
+    name = service.split()[1]
+    pattern = rb'(?m)^service ' + re.escape(name) + rb'[^\n]*\n(?:[ \t]+[^\n]*\n)*'
     matches = list(re.finditer(pattern, content))
     if matches:
-        if len(matches) != 1 or matches[0].group() != SERVICE:
-            raise ValueError('Existing kf-tailscale service differs from the supported definition')
+        if len(matches) != 1 or matches[0].group() != service:
+            raise ValueError('Existing service differs from the supported definition')
         return content
-    return content.rstrip(b'\n') + b'\n\n' + SERVICE
+    return content.rstrip(b'\n') + b'\n\n' + service
 
 
 def replace_entry(archive, name, replacement):
@@ -59,7 +60,11 @@ def replace_entry(archive, name, replacement):
     raise ValueError('Malformed cpio archive')
 
 
-def patch_boot(raw):
+def startup_with_tailscale(content):
+    return startup_with_service(content)
+
+
+def patch_boot(raw, service=SERVICE):
     """Return (image, manifest), or the original bytes when already configured."""
     if len(raw) != BOOT_SIZE or raw[:8] != b'ANDROID!':
         raise ValueError('Expected a full Nokia 8110 boot partition image')
@@ -79,7 +84,7 @@ def patch_boot(raw):
     if INIT not in original or 'init.b2g.rc' not in original or not re.search(
             rb'(?m)^import /init\.kaiforward-native\.rc\s*$', original['init.b2g.rc'][1]):
         raise ValueError('Boot image is not the supported native KaiForward firmware')
-    updated = startup_with_tailscale(original[INIT][1])
+    updated = startup_with_service(original[INIT][1], service)
     kernel = raw[page:page + kernel_size]
     manifest = {'original_sha256': hashlib.sha256(raw).hexdigest(),
                 'bytes': len(raw), 'kernel_sha256': hashlib.sha256(kernel).hexdigest(),

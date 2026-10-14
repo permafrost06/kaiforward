@@ -339,3 +339,53 @@ third-party components with their respective upstream licenses. Downloaded
 sources retain their license files. These component licenses also apply when
 distributing firmware images; the root MIT license covers KaiForward's own
 userspace code.
+
+## SSH access
+
+Build and install the pinned [Dropbear](https://github.com/mkj/dropbear) server
+in one command:
+
+```sh
+python3 -m scripts.ssh install --public-key /path/to/key.pub
+ssh root@<phone-wifi-or-tailscale-ip>
+```
+
+The installer requires root ADB and an Ed25519 public key supplied explicitly
+with `--public-key /path/to/key.pub`. It never selects a key automatically.
+It downloads verified build inputs, builds the static ARM server on the PC,
+and reuses valid builds from `data/ssh-install/`. Add `--cache <directory>` to
+change that cache, `--zig /path/to/zig` to use your own compiler, or
+`--runtime dist/ssh-runtime` to install a runtime built separately with
+`python3 -m firmware.scripts.build_ssh`. Linux, Python 3.11+, make and
+`ssh-keygen` are required; Zig is prepared automatically if needed.
+
+It verifies the runtime and all transfers, saves a verified boot backup, and
+adds `kf-ssh` without changing the kernel or other startup services, and prints a guarded rollback
+command. SSH starts immediately; restart the phone yourself when ready to load
+the new init service. The installer never reboots. Repeating an identical
+install skips payload and boot writes, retains the enabled/disabled setting,
+and retains host keys.
+
+Only the `root` account exists. Password authentication is compiled out.
+Host keys, authorized keys and binaries live in `/data/kaiforward/ssh` and
+survive firmware updates. Installation replaces `authorized_keys` with the
+supplied key. Port 22 listens on Wi-Fi and Tailscale; TCP forwarding is disabled.
+Shell commands and interactive terminals work; this build has no SFTP server.
+Use ADB for file transfers. The upstream license is installed beside the server.
+
+```sh
+python3 -m scripts.ssh status
+python3 -m scripts.ssh stop
+python3 -m scripts.ssh start
+python3 -m scripts.ssh rollback <installation-id>
+```
+
+`stop` persists across reboot; `start` clears that setting. Rollback restores
+the previous payload and boot image, refusing to overwrite later boot changes.
+It retains generated host keys. Add `--serial <serial>` before the subcommand
+when multiple phones are connected. For SSH over USB:
+
+```sh
+adb forward tcp:2222 tcp:22
+ssh -p 2222 root@127.0.0.1
+```
