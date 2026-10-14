@@ -99,10 +99,11 @@ Build commands only produce PC files. Hardware validation remains separate;
 the PoC demonstrated native startup, SMS forwarding and two-way browser call
 audio on SIM 2, but this port's newly assembled images need their own trial.
 
-The PC SMS receiver and browser relay are not included in this firmware port.
-The SMS service uses the PoC `/v1/messages` receiver protocol. The call helper
-connects to the same configured host over TLS on port 8769 by default. Both
-use the provisioned device ID/token; the relay expects the PoC call protocol.
+The SMS service uploads to the `/v1/messages` receiver protocol, implemented
+by the Convex receiver in [`receiver/`](../receiver/README.md). The browser
+call relay is not included in this firmware port. The call helper connects to
+the same configured host over TLS on port 8769 by default. Both authenticate
+with the receiver token alone; the relay expects the PoC call protocol.
 
 Prepare private settings with:
 
@@ -114,7 +115,7 @@ python3 -m scripts.configure_native \
   --ca /path/to/receiver-ca.pem
 ```
 
-The receiver config contains `token` and `device_id`. Passwords are prompted
+The receiver config contains `token`. Passwords are prompted
 without echoing. Add `--install --serial <serial>` to provision an installed
 native phone through root ADB. This writes settings and requests a reload.
 The keypad UI can edit Wi-Fi and destination settings; certificates are
@@ -140,8 +141,9 @@ adb shell /system/bin/kaiforward-native --settings-key
 ```
 
 `--settings-set` reads JSON from stdin. Supported fields are `ssid`, `password`,
-`url`, `token`, and `device_id`, all strings. Omitted fields retain their current
-values. Settings may be provisioned in stages: an empty SSID clears the saved network,
+`url` and `token`, all strings. Omitted fields retain their current values.
+Configs written by earlier builds may contain a `device_id` line; it is ignored
+and dropped on the next save. Settings may be provisioned in stages: an empty SSID clears the saved network,
 an empty password selects an open network, and an empty URL or token disables
 uploading. Invalid fields, duplicate keys, invalid credentials, and control
 characters reject the entire patch. The maximum JSON body is 16384 bytes.
@@ -157,7 +159,7 @@ clients have bounded buffers and five-second deadlines.
 HTTP clients use `Authorization: Bearer <settings-key>` for both
 `GET /v1/settings` and `PATCH /v1/settings`. Patches require
 `Content-Type: application/json` and a `Content-Length`; chunked bodies are
-unsupported. A successful response contains `ssid`, `url`, `device_id`,
+unsupported. A successful response contains `ssid`, `url`,
 `password_set`, and `token_set`, with no passwords, receiver tokens, or access
 keys. Invalid requests return 400, missing/wrong keys 401, unknown paths 404,
 unsupported methods 405, a busy settings writer 409, oversized requests 413,

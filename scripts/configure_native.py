@@ -14,7 +14,7 @@ PROJECT = Path(__file__).resolve().parents[1]
 
 
 def encode_config(values):
-    fields = ['ssid', 'password', 'url', 'token', 'device_id']
+    fields = ['ssid', 'password', 'url', 'token']
     if set(values) != set(fields) or not all(isinstance(v, str) for v in values.values()):
         raise ValueError('Invalid settings fields')
     if any(any(ord(c) < 32 or ord(c) == 127 for c in v) for v in values.values()):
@@ -29,7 +29,7 @@ def encode_config(values):
         raise ValueError('Provide an HTTP(S) receiver URL without embedded credentials or fragment')
     if any(c in values['url'] + values['token'] for c in ' "\\'):
         raise ValueError('URL/token contains an unsupported character')
-    for name, limit in [('url', 1024), ('token', 256), ('device_id', 128)]:
+    for name, limit in [('url', 1024), ('token', 256)]:
         if not 1 <= len(values[name].encode()) <= limit:
             raise ValueError(name + ' is empty or too long')
     return ''.join(name + '=' + values[name] + '\n' for name in fields)
@@ -70,7 +70,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--ssid')
     parser.add_argument('--receiver-url', help='Complete URL, including /v1/messages')
-    parser.add_argument('--receiver-config', type=Path, default=PROJECT / 'data/config.json', help='PC config containing token and device_id')
+    parser.add_argument('--receiver-config', type=Path, default=PROJECT / 'data/config.json', help='PC config containing the receiver token')
     parser.add_argument('--ca', type=Path, help='Trusted CA bundle, or certificate for a private HTTPS receiver')
     parser.add_argument('--output', type=Path, default=PROJECT / 'data/native-settings')
     parser.add_argument('--install', action='store_true', help='Copy settings to an installed native Gerda phone')
@@ -86,8 +86,7 @@ def main():
     password = '' if password == 'OPEN' else password or existing.get('password', '')
     url = args.receiver_url or input('Receiver URL [' + existing.get('url', '') + ']: ') or existing.get('url', '')
     token = receiver.get('token') or existing.get('token') or getpass.getpass('Receiver token: ')
-    device_id = receiver.get('device_id') or existing.get('device_id', 'nokia-8110')
-    values = dict(ssid=ssid, password=password, url=url, token=token, device_id=device_id)
+    values = dict(ssid=ssid, password=password, url=url, token=token)
     write_private(args.output / 'config', encode_config(values))
     ca = args.ca
     if url.startswith('https://') and not ca and not (args.output / 'ca.pem').exists():

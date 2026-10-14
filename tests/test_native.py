@@ -198,7 +198,7 @@ class NativeTests(unittest.TestCase):
             self.assertEqual(self.lib.ack_valid(bad, key), 0)
 
     def test_native_settings_and_wifi_escaping(self):
-        values = dict(ssid='test"wifi', password='password"12', url='https://example.org/v1/messages', token='test-token', device_id='test')
+        values = dict(ssid='test"wifi', password='password"12', url='https://example.org/v1/messages', token='test-token')
         encoded = configure.encode_config(values)
         (self.home / 'config').write_text(encoded)
         result = subprocess.run([str(self.binary), '--home', str(self.home), '--wifi-config'], capture_output=True, text=True, check=True)
@@ -299,7 +299,7 @@ class NativeTests(unittest.TestCase):
         self.assertEqual(self.rows(), [])
 
     def test_upload_to_real_receiver_replays_after_lost_ack(self):
-        config = {'token': 'test-token', 'device_id': 'test-native'}
+        config = {'token': 'test-token'}
         receiver_path = self.home / 'receiver.sqlite3'
         receiver.connect(receiver_path).close()
         handler = receiver.handler_for(receiver_path, config)
@@ -499,7 +499,7 @@ class NativeTests(unittest.TestCase):
         subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1',
                         '-keyout', str(private_key), '-out', str(certificate), '-subj', '/CN=127.0.0.1',
                         '-addext', 'subjectAltName=IP:127.0.0.1'], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        config = {'token': 'test-token', 'device_id': 'test-native'}
+        config = {'token': 'test-token'}
         path = self.home / 'tls-receiver.sqlite3';receiver.connect(path).close()
         server = ThreadingHTTPServer(('127.0.0.1', 0), receiver.handler_for(path, config))
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER);context.load_cert_chain(certificate, private_key)

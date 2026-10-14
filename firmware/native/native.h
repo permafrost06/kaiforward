@@ -14,7 +14,7 @@ typedef struct {
     int signal, security; /* 0 open, 1 WPA PSK, 2 unsupported */
 } WifiNetwork;
 typedef struct {
-    char ssid[129], password[129], url[1025], token[257], device_id[129];
+    char ssid[129], password[129], url[1025], token[257];
 } Config;
 typedef struct {
     char sender[129], body[KF_TEXT];
@@ -68,7 +68,7 @@ sqlite3 *store_open(const char *home);
 int store_pdu(sqlite3 *db, int slot, const char *pdu);
 int store_unsupported(sqlite3 *db, int slot, int type, const char *hex);
 int store_count(sqlite3 *db, const char *table, const char *where);
-int store_next(sqlite3 *db, const Config *c, char *json, size_t cap, char *key, size_t key_cap,
+int store_next(sqlite3 *db, char *json, size_t cap, char *key, size_t key_cap,
                int64_t *id);
 int store_ack(sqlite3 *db, int64_t id);
 int64_t store_send(sqlite3 *db, int slot, const char *recipient, const char *body);

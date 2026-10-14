@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PoC receiver fixture for native upload contract tests; no service is started on import."""
+"""Receiver fixture for native upload contract tests; no service is started on import."""
 import argparse
 from contextlib import closing
 import hmac
@@ -22,7 +22,7 @@ def load_config(directory):
     if not path.exists():
         descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(descriptor, 'w') as stream:
-            json.dump({'token': secrets.token_urlsafe(32), 'device_id': 'nokia-8110'}, stream)
+            json.dump({'token': secrets.token_urlsafe(32)}, stream)
     return json.loads(path.read_text())
 
 
@@ -30,14 +30,14 @@ def connect(path):
     database = sqlite3.connect(path, timeout=15)
     database.execute('PRAGMA journal_mode=WAL')
     database.execute('''CREATE TABLE IF NOT EXISTS messages (
-        device_id TEXT NOT NULL, message_key TEXT NOT NULL, payload TEXT NOT NULL,
-        received_at INTEGER NOT NULL, PRIMARY KEY (device_id, message_key))''')
+        message_key TEXT PRIMARY KEY, payload TEXT NOT NULL, received_at INTEGER NOT NULL)''')
     return database
 
 
-def validate(payload, device_id):
-    if not isinstance(payload, dict) or payload.get('device_id') != device_id:
-        raise ValueError('Unknown device')
+def validate(payload):
+    # The token identifies the single phone; uploads carry only messages.
+    if not isinstance(payload, dict) or set(payload) != {'messages'}:
+        raise ValueError('Expected only messages')
     messages = payload.get('messages')
     if not isinstance(messages, list) or not 1 <= len(messages) <= 50:
         raise ValueError('Expected 1 to 50 messages')
@@ -104,7 +104,7 @@ def handler_for(database_path, config):
             if not self.authorized():
                 return
             with closing(connect(database_path)) as database:
-                count = database.execute('SELECT COUNT(*) FROM messages WHERE device_id=?', (config['device_id'],)).fetchone()[0]
+                count = database.execute('SELECT COUNT(*) FROM messages').fetchone()[0]
             self.respond(200, {'messages': count})
 
         def do_POST(self):
@@ -119,7 +119,7 @@ def handler_for(database_path, config):
                 if not 0 < length <= MAX_BODY:
                     self.respond(413, {'error': 'Body size outside limits'})
                     return
-                messages = validate(json.loads(self.rfile.read(length)), config['device_id'])
+                messages = validate(json.loads(self.rfile.read(length)))
             except (ValueError, TypeError, TimeoutError):
                 self.respond(400, {'error': 'Invalid request'})
                 return
@@ -127,15 +127,15 @@ def handler_for(database_path, config):
                 with closing(connect(database_path)) as database, database:
                     for message in messages:
                         serialized = json.dumps(message, sort_keys=True, ensure_ascii=False)
-                        previous = database.execute('SELECT payload FROM messages WHERE device_id=? AND message_key=?',
-                                                    (config['device_id'], message['key'])).fetchone()
+                        previous = database.execute('SELECT payload FROM messages WHERE message_key=?',
+                                                    (message['key'],)).fetchone()
                         if previous:
                             # Compare defaults too, so archives from the received-only app remain replayable.
-                            prior = validate({'device_id': config['device_id'], 'messages': [json.loads(previous[0])]}, config['device_id'])[0]
+                            prior = validate({'messages': [json.loads(previous[0])]})[0]
                             if prior != message:
                                 raise ValueError('Message key already has different content')
-                        database.execute('INSERT OR IGNORE INTO messages VALUES (?, ?, ?, ?)',
-                                         (config['device_id'], message['key'], serialized, int(time.time() * 1000)))
+                        database.execute('INSERT OR IGNORE INTO messages VALUES (?, ?, ?)',
+                                         (message['key'], serialized, int(time.time() * 1000)))
                 self.respond(200, {'accepted': [message['key'] for message in messages]})
             except ValueError:
                 self.respond(409, {'error': 'Message key conflict'})

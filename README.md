@@ -53,10 +53,10 @@ python3 -m scripts.settings_native set settings.json
 For example, `settings.json` can contain:
 
 ```json
-{"ssid":"Your Wi-Fi","password":"your-password","device_id":"nokia-8110"}
+{"ssid":"Your Wi-Fi","password":"your-password"}
 ```
 
-The writable fields are `ssid`, `password`, `url`, `token`, and `device_id`.
+The writable fields are `ssid`, `password`, `url` and `token`.
 Omitted fields keep their current values. Empty `password` selects an open
 network; empty `url` or `token` disables forwarding. Reads and update responses
 hide credentials and report `password_set` and `token_set` instead. Add

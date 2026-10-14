@@ -95,11 +95,10 @@ class NativeSettingsTests(unittest.TestCase):
 
     def test_cli_partial_updates_private_storage_and_defaults(self):
         defaults = json.loads(self.command('--settings').stdout)
-        self.assertEqual(defaults, dict(ssid='', url='', device_id='nokia-8110',
+        self.assertEqual(defaults, dict(ssid='', url='',
                                        password_set=False, token_set=False))
         values = dict(ssid='ঢাকা "home"', password='private=password',
-                      url='https://example.org/v1/messages', token='private-token',
-                      device_id='phone-one')
+                      url='https://example.org/v1/messages', token='private-token')
         result = self.update(values)
         self.assertTrue(result['password_set'])
         self.assertTrue(result['token_set'])
@@ -110,9 +109,10 @@ class NativeSettingsTests(unittest.TestCase):
         self.assertEqual((self.home / 'config').stat().st_mode & 0o777, 0o600)
         self.assertTrue((self.home / 'reload').exists())
         self.assertTrue((self.home / 'sync').exists())
-        result = self.update({'device_id': 'phone-two'})
+        result = self.update({'url': 'https://example.org/v2/messages'})
         self.assertEqual(result['ssid'], values['ssid'])
-        self.assertEqual(result['device_id'], 'phone-two')
+        self.assertEqual(result['url'], 'https://example.org/v2/messages')
+        self.assertNotIn('device_id', result)
         self.assertIn('token=private-token\n', (self.home / 'config').read_text())
         wifi = self.command('--wifi-config').stdout
         self.assertIn('ssid="ঢাকা \\"home\\""', wifi)
@@ -124,23 +124,23 @@ class NativeSettingsTests(unittest.TestCase):
         self.assertEqual(json.loads(self.command('--settings').stdout), result)
 
     def test_invalid_patches_do_not_change_settings_or_request_reload(self):
-        self.update(dict(ssid='home', password='password12', device_id='original'))
+        self.update(dict(ssid='home', password='password12', url='http://host/original'))
         saved = (self.home / 'config').read_bytes()
         (self.home / 'reload').unlink()
         (self.home / 'sync').unlink()
         invalid = ['{}', '[]', 'null', '{', '{"ssid":"one","ssid":"two"}',
                    '{"ssid\\u0000extra":"one"}', '{"ssid":"bad\\u0000name"}',
-                   '{"device_id":"ok"} trailing']
+                   '{"ssid":"ok"} trailing']
         invalid += [json.dumps(p) for p in [dict(unknown='field'), dict(password=None),
                     dict(password=123), dict(ssid='x'*33), dict(ssid='ঢ'*11),
-                    dict(password='short'), dict(password='z'*64), dict(device_id=''),
-                    dict(device_id='x'*129), dict(token='x'*257), dict(url='x'*1025),
+                    dict(password='short'), dict(password='z'*64), dict(device_id='removed'),
+                    dict(token='x'*257), dict(url='x'*1025),
                     dict(token='header\nInjected'), dict(url='file:///etc/passwd'),
                     dict(url='https://'), dict(url='http://?query'),
                     dict(url='https://user:pass@example.org'),
                     dict(url='https://example.org#fragment'), dict(url='http://host:65536'),
                     dict(url='http://host:no'), dict(url='http://[bad]')]]
-        invalid += [' '*16385, '{"device_id":"nul\0byte"}']
+        invalid += [' '*16385, '{"ssid":"nul\0byte"}']
         for data in invalid:
             with self.subTest(data=data[:100]):
                 result = self.command('--settings-set', data, check=False)
@@ -149,6 +149,14 @@ class NativeSettingsTests(unittest.TestCase):
                 self.assertEqual((self.home / 'config').read_bytes(), saved)
                 self.assertFalse((self.home / 'reload').exists())
                 self.assertFalse((self.home / 'sync').exists())
+
+    def test_legacy_device_id_is_ignored_and_dropped_on_save(self):
+        (self.home / 'config').write_text('ssid=home\npassword=password12\nurl=\ntoken=\ndevice_id=nokia-8110\n')
+        self.assertEqual(json.loads(self.command('--settings').stdout),
+                         dict(ssid='home', url='', password_set=True, token_set=False))
+        self.update({'token': 'new-token'})
+        self.assertEqual((self.home / 'config').read_text(),
+                         'ssid=home\npassword=password12\nurl=\ntoken=new-token\n')
 
     def test_corrupt_config_and_busy_lock_are_not_overwritten(self):
         (self.home / 'config').write_text('unrecognized=private\n')
@@ -172,9 +180,9 @@ class NativeSettingsTests(unittest.TestCase):
         self.assertNotIn('secret-password', json.dumps(data))
         self.assertNotIn('receiver-token', json.dumps(data))
         self.assertTrue(data['token_set'])
-        status, data = self.request('PATCH', json.dumps(dict(device_id='new-phone', url='http://host:8080/sms')))
+        status, data = self.request('PATCH', json.dumps(dict(ssid='new-home', url='http://host:8080/sms')))
         self.assertEqual(status, 200)
-        self.assertEqual(data['device_id'], 'new-phone')
+        self.assertEqual(data['url'], 'http://host:8080/sms')
         self.assertIn('password=secret-password\n', (self.home / 'config').read_text())
         self.assertEqual(self.request('PATCH', '{"token":"new-token"}')[0], 200)
         self.assertEqual(self.request()[1], json.loads(self.command('--settings').stdout))
@@ -191,7 +199,7 @@ class NativeSettingsTests(unittest.TestCase):
         self.assertEqual(self.command('--settings-key').stdout.strip(), self.key)
         self.assertEqual((self.home / 'settings.key').stat().st_mode & 0o777, 0o600)
         self.start()
-        self.assertEqual(self.request()[1]['device_id'], 'new-phone')
+        self.assertEqual(self.request()[1]['ssid'], 'new-home')
         self.assertIsNone(self.process.poll())
 
     def test_http_rejects_ambiguous_or_oversize_requests_and_handles_fragments(self):
@@ -244,7 +252,7 @@ class NativeSettingsTests(unittest.TestCase):
             ack = fixtures.read_frame(conn)
             self.assertEqual(struct.unpack('<i', ack[:4])[0], 37)
             self.assertEqual(struct.unpack('<iii', ack[8:]), (2, 1, 0))
-            self.assertEqual(self.request('PATCH', '{"device_id":"still-receiving"}')[0], 200)
+            self.assertEqual(self.request('PATCH', '{"ssid":"still-receiving"}')[0], 200)
         with closing(sqlite3.connect(self.home / 'native.sqlite3')) as db:
             self.assertEqual(db.execute('SELECT body FROM messages').fetchall(), [('during HTTP',)])
         self.assertIsNone(self.process.poll())

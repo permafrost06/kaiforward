@@ -253,7 +253,7 @@ int store_count(sqlite3 *db, const char *table, const char *where) {
     sqlite3_finalize(q);
     return count;
 }
-int store_next(sqlite3 *db, const Config *c, char *json, size_t cap, char *key, size_t key_cap,
+int store_next(sqlite3 *db, char *json, size_t cap, char *key, size_t key_cap,
                int64_t *id) {
     sqlite3_stmt *q = prepare(db, "SELECT id,stamp,sender,body,slot,direction,recipient FROM "
                                   "messages WHERE uploaded=0 ORDER BY id LIMIT 1");
@@ -271,7 +271,7 @@ int store_next(sqlite3 *db, const Config *c, char *json, size_t cap, char *key, 
     *id = sqlite3_column_int64(q, 0);
     int64_t stamp = sqlite3_column_int64(q, 1), wire_id = 1000000000 + *id;
     snprintf(key, key_cap, "%lld:%lld", (long long)wire_id, (long long)stamp);
-    char device[800], sender[800], recipient[800], direction[100];
+    char sender[800], recipient[800], direction[100];
     const char *s = (const char *)sqlite3_column_text(q, 3);
     char *body = malloc(strlen(s) * 6 + 3);
     if (!body) {
@@ -279,7 +279,6 @@ int store_next(sqlite3 *db, const Config *c, char *json, size_t cap, char *key, 
         return -1;
     }
     int bad =
-        json_string(device, sizeof(device), c->device_id) < 0 ||
         json_string(sender, sizeof(sender), (const char *)sqlite3_column_text(q, 2)) < 0 ||
         json_string(body, strlen(s) * 6 + 3, s) < 0 ||
         json_string(recipient, sizeof(recipient), (const char *)sqlite3_column_text(q, 6)) < 0 ||
@@ -287,10 +286,10 @@ int store_next(sqlite3 *db, const Config *c, char *json, size_t cap, char *key, 
     int length = -1;
     if (!bad)
         length = snprintf(json, cap,
-                          "{\"device_id\":%s,\"messages\":[{\"key\":\"%s\",\"id\":%lld,"
+                          "{\"messages\":[{\"key\":\"%s\",\"id\":%lld,"
                           "\"timestamp\":%lld,\"sender\":%s,\"recipient\":%s,\"direction\":%s,"
                           "\"body\":%s,\"sim_slot\":%d}]}",
-                          device, key, (long long)wire_id, (long long)stamp, sender, recipient,
+                          key, (long long)wire_id, (long long)stamp, sender, recipient,
                           direction, body, sqlite3_column_int(q, 4));
     free(body);
     sqlite3_finalize(q);

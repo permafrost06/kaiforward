@@ -137,11 +137,10 @@ static int session(const char *home, const char *override, const char *port, con
     if (mbedtls_ssl_handshake(&ssl) || mbedtls_ssl_get_verify_result(&ssl) ||
         mbedtls_net_set_nonblock(&network))
         goto cleanup;
-    char device[800], token[1600], hello[2600];
-    if (json_string(device, sizeof(device), config.device_id) < 0 ||
-        json_string(token, sizeof(token), config.token) < 0)
+    char token[1600], hello[1700];
+    if (json_string(token, sizeof(token), config.token) < 0)
         goto cleanup;
-    snprintf(hello, sizeof(hello), "{\"protocol\":1,\"device_id\":%s,\"token\":%s}", device, token);
+    snprintf(hello, sizeof(hello), "{\"protocol\":1,\"token\":%s}", token);
     if (send_frame(&ssl, network.fd, HELLO, hello, strlen(hello)))
         goto cleanup;
     unsigned char incoming[8196];

@@ -19,7 +19,7 @@ static int upload_one(const char *home, const char *curl, sqlite3 *db, const Con
     char *json = malloc(400000);
     if (!json)
         return -1;
-    int rc = store_next(db, c, json, 400000, key, sizeof(key), &id);
+    int rc = store_next(db, json, 400000, key, sizeof(key), &id);
     if (rc != 1) {
         free(json);
         return rc;

@@ -10,7 +10,7 @@ import uuid
 from scripts.adb import Adb
 
 RUNTIME = '/system/bin/kaiforward-native'
-FIELDS = {'ssid', 'password', 'url', 'token', 'device_id'}
+FIELDS = {'ssid', 'password', 'url', 'token'}
 
 
 def unique_fields(pairs):

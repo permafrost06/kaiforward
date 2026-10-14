@@ -153,8 +153,7 @@ static int receiver_url_valid(const char *url) {
     return 1;
 }
 int config_valid(const Config *c) {
-    if (!safe(c->ssid) || !safe(c->password) || !safe(c->url) || !safe(c->token) ||
-        !safe(c->device_id))
+    if (!safe(c->ssid) || !safe(c->password) || !safe(c->url) || !safe(c->token))
         return 0;
     if (strlen(c->ssid) > 32)
         return 0;
@@ -166,8 +165,6 @@ int config_valid(const Config *c) {
             if (!isxdigit((unsigned char)c->password[i]))
                 return 0;
     }
-    if (!*c->device_id)
-        return 0;
     /* Empty destination is allowed during setup; upload requires URL and token. */
     if (!receiver_url_valid(c->url))
         return 0;
@@ -177,7 +174,6 @@ int config_valid(const Config *c) {
 }
 int config_load(const char *home, Config *c) {
     memset(c, 0, sizeof(*c));
-    strcpy(c->device_id, "nokia-8110");
     char path[1200], line[1600];
     snprintf(path, sizeof(path), "%s/config", home);
     FILE *f = fopen(path, "r");
@@ -197,6 +193,9 @@ int config_load(const char *home, Config *c) {
             return -1;
         }
         *v++ = 0;
+        /* Configs saved by earlier builds still carry the removed device ID. */
+        if (!strcmp(line, "device_id"))
+            continue;
         char *dest = NULL;
         size_t cap = 0;
 #define FIELD(n)                                                                                   \
@@ -205,7 +204,7 @@ int config_load(const char *home, Config *c) {
         cap = sizeof(c->n);                                                                        \
     }
         FIELD(ssid)
-        else FIELD(password) else FIELD(url) else FIELD(token) else FIELD(device_id)
+        else FIELD(password) else FIELD(url) else FIELD(token)
 #undef FIELD
             if (!dest || strlen(v) >= cap) {
             fclose(f);
@@ -222,8 +221,8 @@ int config_save(const char *home, const Config *c) {
         return -1;
     char path[1200], buf[2200];
     snprintf(path, sizeof(path), "%s/config", home);
-    snprintf(buf, sizeof(buf), "ssid=%s\npassword=%s\nurl=%s\ntoken=%s\ndevice_id=%s\n", c->ssid,
-             c->password, c->url, c->token, c->device_id);
+    snprintf(buf, sizeof(buf), "ssid=%s\npassword=%s\nurl=%s\ntoken=%s\n", c->ssid,
+             c->password, c->url, c->token);
     return atomic_write(path, buf);
 }
 int json_string(char *out, size_t cap, const char *s) {

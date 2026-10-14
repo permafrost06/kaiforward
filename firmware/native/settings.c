@@ -19,16 +19,15 @@ static int load(const char *home, Config *c) {
 
 int settings_read(const char *home, char *json, size_t cap) {
     Config c;
-    char ssid[800], url[6200], device[800];
+    char ssid[800], url[6200];
     if (load(home, &c) || json_string(ssid, sizeof(ssid), c.ssid) < 0 ||
-        json_string(url, sizeof(url), c.url) < 0 ||
-        json_string(device, sizeof(device), c.device_id) < 0)
+        json_string(url, sizeof(url), c.url) < 0)
         return -1;
     int n =
         snprintf(json, cap,
-                 "{\"ssid\":%s,\"url\":%s,\"device_id\":%s,\"password_set\":%"
+                 "{\"ssid\":%s,\"url\":%s,\"password_set\":%"
                  "s,\"token_set\":%s}\n",
-                 ssid, url, device, *c.password ? "true" : "false", *c.token ? "true" : "false");
+                 ssid, url, *c.password ? "true" : "false", *c.token ? "true" : "false");
     return n < 0 || (size_t)n >= cap ? -1 : 0;
 }
 
@@ -79,8 +78,7 @@ int settings_update(sqlite3 *db, const char *home, const char *json) {
         } fields[] = {{"ssid", c.ssid, sizeof(c.ssid)},
                       {"password", c.password, sizeof(c.password)},
                       {"url", c.url, sizeof(c.url)},
-                      {"token", c.token, sizeof(c.token)},
-                      {"device_id", c.device_id, sizeof(c.device_id)}};
+                      {"token", c.token, sizeof(c.token)}};
         for (unsigned i = 0; i < sizeof(fields) / sizeof(fields[0]); i++)
             if (!strcmp(name, fields[i].name)) {
                 dest = fields[i].value;
