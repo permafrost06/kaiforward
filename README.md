@@ -1,5 +1,13 @@
 # KaiForward
 
+## Android SMS viewer
+
+The native Android app in [`android/`](android/README.md) displays SMSes forwarded
+from the KaiForward phone through the Convex receiver. It includes conversations,
+message search, paginated history, and optional local contact-name lookup.
+See the [Android setup instructions](android/README.md) to build the APK and
+configure authenticated read access.
+
 ## Build boot and system images
 
 The native firmware source is in [`firmware/`](firmware/README.md): keypad UI,

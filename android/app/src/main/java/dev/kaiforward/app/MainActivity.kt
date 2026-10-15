@@ -1,0 +1,396 @@
+package dev.kaiforward.app
+
+import android.Manifest
+import android.content.Intent
+import android.net.Uri
+import android.os.Bundle
+import android.provider.Settings
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.time.format.FormatStyle
+
+class MainActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
+        setContent {
+            val colors = if (isSystemInDarkTheme()) darkColorScheme(primary = Color(0xFF9DD5C4))
+                else lightColorScheme(primary = Color(0xFF164E43), secondary = Color(0xFF52655E),
+                    background = Color(0xFFF8FAF7), surface = Color(0xFFF8FAF7))
+            MaterialTheme(colorScheme = colors) { SmsViewer() }
+        }
+    }
+}
+
+private fun dateTime(timestamp: Long): String = DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM, FormatStyle.SHORT)
+    .withZone(ZoneId.systemDefault()).format(Instant.ofEpochMilli(timestamp))
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SmsViewer(model: MessagesViewModel = viewModel()) {
+    val state by model.state.collectAsStateWithLifecycle()
+    val searchState by model.searchState.collectAsStateWithLifecycle()
+    val threadState by model.threadState.collectAsStateWithLifecycle()
+    var selected by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedNumber by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedMessage by rememberSaveable { mutableStateOf<String?>(null) }
+    var settings by rememberSaveable { mutableStateOf(false) }
+    var searchOpen by rememberSaveable { mutableStateOf(false) }
+    var search by rememberSaveable { mutableStateOf("") }
+    var contactHelp by rememberSaveable { mutableStateOf(false) }
+    val context = LocalContext.current
+    val keyboard = LocalSoftwareKeyboardController.current
+    val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { allowed ->
+        model.resolveContacts()
+        contactHelp = !allowed
+    }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { model.resolveContacts() }
+    val threads = state.conversations
+    val inboxThread = threads.firstOrNull { it.key == selected }
+    val remoteThread = if (threadState.conversation == selected) threadState else ThreadState(conversation = selected, busy = true)
+    val thread = selected?.let { key -> Conversation(key, inboxThread?.number ?: selectedNumber ?: key,
+        remoteThread.messages.sortedWith(compareBy<Sms> { it.timestamp }.thenBy { it.key })) }
+    val threadViewer = state.copy(busy = remoteThread.busy,
+        cursor = remoteThread.cursor, error = remoteThread.error,
+        refreshedAt = if (remoteThread.completed) 0L else null)
+    LaunchedEffect(selected, selectedMessage, state.connected) {
+        model.openThread(if (state.connected) selected else null, selectedMessage)
+    }
+    val searching = searchOpen && selected == null && !settings && state.connected
+    LaunchedEffect(searchOpen, search) { model.search(if (searchOpen) search else "") }
+    fun goBack() {
+        when {
+            settings -> settings = false
+            selected != null -> { selected = null; selectedNumber = null; selectedMessage = null }
+            else -> { keyboard?.hide(); searchOpen = false; search = "" }
+        }
+    }
+    BackHandler(settings || selected != null || searchOpen, onBack = ::goBack)
+    Scaffold(topBar = {
+        TopAppBar(title = {
+            if (searching) SearchField(search, onChange = { search = it }) else Column {
+                Text(if (settings) "Connection" else if (thread != null) state.names[thread.key] ?: searchState.names[thread.key] ?: thread.number.ifBlank { "Unknown sender" } else "Messages",
+                    maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
+                if (!settings && state.connected) {
+                    Text(if (thread != null) thread.number else
+                        (state.refreshedAt?.let { updatedLabel(it) } ?: "Updating…"),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1,
+                        overflow = TextOverflow.Ellipsis)
+                }
+            }
+        }, navigationIcon = {
+            if (settings || selected != null || searching) IconButton(onClick = ::goBack) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
+            }
+        }, actions = {
+            if (state.connected && !settings && !searching) {
+                if (selected == null) IconButton(onClick = { searchOpen = true }) { Icon(Icons.Default.Search, "Search messages") }
+                IconButton(onClick = { if (selected != null) model.refreshThread() else model.refresh() }, enabled = if (selected != null) !remoteThread.busy else !state.busy) { Icon(Icons.Default.Refresh, "Refresh messages") }
+                IconButton(onClick = { settings = true; model.clearError() }) { Icon(Icons.Default.Settings, "Connection settings") }
+            }
+        })
+    }) { padding ->
+        Column(Modifier.fillMaxSize().padding(padding)) {
+            if (if (selected != null) remoteThread.busy else state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+            if (state.error != null && !searching && selected == null) {
+                Surface(color = MaterialTheme.colorScheme.errorContainer, modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(16.dp)) {
+                        Text(state.error!!, style = MaterialTheme.typography.bodyMedium)
+                        Row {
+                            if (state.connected && !settings) TextButton(onClick = model::refresh, enabled = !state.busy) { Text("Retry refresh") }
+                            TextButton(onClick = model::clearError) { Text("Dismiss") }
+                        }
+                    }
+                }
+            }
+            when {
+                settings || !state.connected -> ConnectionScreen(state,
+                    onConnect = model::connect, onDisconnect = { model.disconnect(); settings = false; selected = null; selectedNumber = null; selectedMessage = null; search = ""; searchOpen = false },
+                    onContacts = { permission.launch(Manifest.permission.READ_CONTACTS) })
+                thread != null -> key(thread.key) { ConversationScreen(thread, threadViewer, model::moreThreadMessages, selectedMessage) }
+                searching -> SearchScreen(search, threads, state, searchState, model::moreSearchResults,
+                    onOpen = { message ->
+                        keyboard?.hide()
+                        selectedNumber = message.peer
+                        selectedMessage = message.key
+                        selected = conversationKey(message.peer)
+                    }, onOpenContact = { keyboard?.hide(); selectedNumber = it.number; selectedMessage = null; selected = it.key })
+                else -> {
+                    if (!state.contactsAllowed) {
+                        TextButton(onClick = { permission.launch(Manifest.permission.READ_CONTACTS) },
+                            modifier = Modifier.padding(horizontal = 12.dp)) { Text("Use contacts") }
+                    }
+                    if (threads.isEmpty()) {
+                        Box(Modifier.weight(1f).fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text("No messages yet", style = MaterialTheme.typography.titleLarge)
+                                Spacer(Modifier.height(8.dp))
+                                Text("Messages will appear here once your KaiForward phone uploads them. Tap refresh to check again.", style = MaterialTheme.typography.bodyMedium)
+                            }
+                        }
+                        HistoryFooter(state, onLoad = model::loadOlder, inbox = true)
+                    } else {
+                        val listState = rememberLazyListState()
+                        LazyColumn(Modifier.weight(1f), state = listState, contentPadding = PaddingValues(top = 12.dp, bottom = 20.dp)) {
+                            items(threads, key = { "conversation:${it.key}" }) { conversation ->
+                                ConversationRow(conversation, state.names[conversation.key]) { selectedNumber = conversation.number; selectedMessage = null; selected = conversation.key }
+                            }
+                            item(key = "history") { HistoryFooter(state, listState, model::loadOlder, inbox = true) }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if (contactHelp) AlertDialog(onDismissRequest = { contactHelp = false },
+        title = { Text("Contact names are optional") },
+        text = { Text("You can keep viewing phone numbers. To enable names after denying permission, allow Contacts in Android app settings. Contact data stays on this device.") },
+        confirmButton = { TextButton(onClick = {
+            contactHelp = false
+            context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}")))
+        }) { Text("App settings") } },
+        dismissButton = { TextButton(onClick = { contactHelp = false }) { Text("Keep numbers") } })
+}
+
+@Composable
+private fun SearchField(query: String, onChange: (String) -> Unit) {
+    val focus = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    LaunchedEffect(Unit) { focus.requestFocus() }
+    TextField(value = query, onValueChange = { onChange(it.take(256)) },
+        placeholder = { Text("Search messages") }, singleLine = true,
+        modifier = Modifier.fillMaxWidth().focusRequester(focus),
+        colors = TextFieldDefaults.colors(
+            focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent,
+            focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent),
+        trailingIcon = {
+            if (query.isNotEmpty()) IconButton(onClick = { onChange("") }) { Icon(Icons.Default.Close, "Clear search") }
+        },
+        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+        keyboardActions = KeyboardActions(onSearch = { keyboard?.hide() }))
+}
+
+@Composable
+internal fun SearchScreen(query: String, threads: List<Conversation>, state: ViewerState, remoteState: SearchState,
+                         loadMore: () -> Unit, onOpen: (Sms) -> Unit, onOpenContact: (Conversation) -> Unit) {
+    val remote = if (remoteState.query == query.trim()) remoteState else SearchState(query.trim(), busy = true)
+    val contacts = remember(threads, query, state.names) {
+        threads.filter { conversation ->
+            state.names[conversation.key]?.contains(query.trim(), true) == true
+        }
+    }
+    val listState = rememberLazyListState()
+    LaunchedEffect(query) { listState.requestScrollToItem(0) }
+    if (query.isBlank()) {
+        Box(Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
+            Text("Search by contact name, phone number, or message text", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    } else {
+        LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = PaddingValues(vertical = 16.dp)) {
+            item {
+                Text(if (remote.busy && remote.messages.isEmpty()) "Searching all messages…"
+                    else if (remote.error != null && remote.messages.isEmpty()) "Search unavailable"
+                    else if (remote.messages.isEmpty()) "No matching messages" else "${remote.messages.size} matching messages",
+                    Modifier.padding(horizontal = 20.dp, vertical = 12.dp), style = MaterialTheme.typography.labelLarge)
+                if (remote.error != null) Text(remote.error, Modifier.padding(horizontal = 20.dp),
+                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+            }
+            if (contacts.isNotEmpty()) item {
+                Text("Matching contacts", Modifier.padding(horizontal = 20.dp, vertical = 12.dp), style = MaterialTheme.typography.labelLarge)
+            }
+            items(contacts, key = { "contact:${it.key}" }) { conversation ->
+                ConversationRow(conversation, state.names[conversation.key]) { onOpenContact(conversation) }
+            }
+            items(remote.messages, key = { "message:${it.key}" }) { message ->
+                val key = conversationKey(message.peer)
+                ConversationRow(Conversation(key, message.peer, listOf(message)), remote.names[key] ?: state.names[key]) { onOpen(message) }
+            }
+            item(key = "history") {
+                HistoryFooter(ViewerState(busy = remote.busy, error = remote.error, cursor = remote.cursor,
+                    refreshedAt = if (remote.completed) 0L else null), listState, loadMore, search = true)
+            }
+        }
+    }
+}
+
+@Composable
+private fun HistoryFooter(state: ViewerState, listState: LazyListState? = null, onLoad: () -> Unit, search: Boolean = false, inbox: Boolean = false) {
+    val currentState by rememberUpdatedState(state)
+    val currentLoad by rememberUpdatedState(onLoad)
+    val trigger = remember(listState) { ScrollPageTrigger() }
+    // Share this gate across every history view, including reversed threads.
+    // Completing a page or dismissing an error is not a new scroll.
+    if (listState != null) LaunchedEffect(listState) {
+        snapshotFlow {
+            Triple(listState.isScrollInProgress,
+                listState.layoutInfo.visibleItemsInfo.any { it.key == "history" },
+                currentState.cursor != null && !currentState.busy && currentState.error == null)
+        }.collect { (scrolling, visible, canLoad) ->
+            if (trigger.shouldLoad(scrolling, visible, canLoad)) currentLoad()
+        }
+    }
+    Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
+        when {
+            state.busy -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                CircularProgressIndicator(Modifier.size(24.dp))
+                Text(if (search) "Searching…" else if (inbox) "Loading conversations…" else "Loading older messages…",
+                    Modifier.padding(top = 8.dp), style = MaterialTheme.typography.labelSmall)
+            }
+            state.cursor != null || state.error != null -> OutlinedButton(onClick = onLoad) {
+                Text(if (search) { if (state.error != null) "Retry search" else "Load more results" }
+                    else if (inbox) { if (state.error != null) "Retry conversations" else "Load more conversations" }
+                    else if (state.error != null) "Retry older messages" else "Load older messages")
+            }
+            state.refreshedAt != null -> Text(if (search) "No more results" else if (inbox) "No more conversations" else "No older messages",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+private fun ConversationRow(conversation: Conversation, name: String?, onClick: () -> Unit) {
+    val title = name ?: conversation.number.ifBlank { "Unknown sender" }
+    Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 20.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(48.dp).background(MaterialTheme.colorScheme.secondaryContainer, CircleShape), contentAlignment = Alignment.Center) {
+            Text(title.take(1).uppercase(), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSecondaryContainer)
+        }
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium)
+            Text((if (conversation.latest.direction == "sent") "You: " else "") + conversation.latest.body,
+                maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(4.dp))
+            Text(dateTime(conversation.latest.timestamp) + (conversation.latest.simSlot?.let { " · SIM $it" } ?: ""),
+                style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+internal fun ConversationScreen(thread: Conversation, state: ViewerState, loadOlder: () -> Unit, selectedMessage: String? = null) {
+    val listState = rememberLazyListState()
+    val matchExists = selectedMessage != null && thread.messages.any { it.key == selectedMessage }
+    LaunchedEffect(thread.key, selectedMessage, matchExists) {
+        if (matchExists) listState.scrollToItem(thread.messages.asReversed().indexOfFirst { it.key == selectedMessage } + 1)
+    }
+    // Reverse layout opens at the newest message and preserves position when history arrives.
+    LazyColumn(Modifier.fillMaxSize(), state = listState, reverseLayout = true,
+        contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item { Text("Viewing only · ${thread.messages.size} loaded messages", style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) }
+        items(thread.messages.asReversed(), key = { it.key }) { message ->
+            val sent = message.direction == "sent"
+            Column(Modifier.fillMaxWidth(), horizontalAlignment = if (sent) Alignment.End else Alignment.Start) {
+                Surface(shape = RoundedCornerShape(18.dp),
+                    color = if (sent) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
+                    modifier = Modifier.widthIn(max = 340.dp)) {
+                    SelectionContainer { Text(message.body.ifEmpty { "(Empty message)" }, Modifier.padding(14.dp), style = MaterialTheme.typography.bodyLarge) }
+                }
+                Text((if (sent) "Sent" else "Received") + " · " + dateTime(message.timestamp) + (message.simSlot?.let { " · SIM $it" } ?: ""),
+                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 5.dp, start = 4.dp, end = 4.dp))
+            }
+        }
+        if (state.error != null) item(key = "thread-error") {
+            Text(state.error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
+        }
+        item(key = "history") { HistoryFooter(state, listState, loadOlder) }
+    }
+}
+
+@Composable
+private fun ConnectionScreen(state: ViewerState, onConnect: (String, String) -> Unit, onDisconnect: () -> Unit, onContacts: () -> Unit) {
+    var endpoint by rememberSaveable(state.endpoint) { mutableStateOf(state.endpoint.ifBlank { "https://peaceful-cuttlefish-556.convex.site" }) }
+    // Credentials intentionally do not enter saved instance state.
+    var token by remember { mutableStateOf("") }
+    var confirmDisconnect by remember { mutableStateOf(false) }
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+        item {
+            Text(if (state.connected) "Your receiver" else "Your phone. Your messages.", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(12.dp))
+            Text("View SMSes forwarded from your KaiForward phone. Connect to the Convex receiver to read your conversations.",
+                style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        if (state.connected) {
+            item {
+                Text(state.endpoint, style = MaterialTheme.typography.bodyMedium)
+                Text("Read-only connection", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+            }
+            item { OutlinedButton(onClick = { confirmDisconnect = true }, enabled = !state.busy) { Text("Disconnect receiver") } }
+        } else {
+            item { OutlinedTextField(endpoint, { endpoint = it }, label = { Text("Receiver URL") },
+                supportingText = { Text("Use the .convex.site origin, without /v1/messages") },
+                modifier = Modifier.fillMaxWidth(), singleLine = true, enabled = !state.busy,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri)) }
+            item { OutlinedTextField(token, { token = it }, label = { Text("Read token") },
+                supportingText = { Text("The receiver’s KAIFORWARD_READ_TOKEN") },
+                visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth(), singleLine = true,
+                enabled = !state.busy, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password)) }
+            item { Button(onClick = { onConnect(endpoint, token) }, enabled = !state.busy && endpoint.isNotBlank() && token.isNotBlank(),
+                modifier = Modifier.fillMaxWidth()) { Text(if (state.busy) "Connecting…" else "Connect and view messages") } }
+        }
+        item { HorizontalDivider() }
+        item {
+            Text("Recognize your contacts", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(8.dp))
+            Text("Allow contact access to show names beside phone numbers. Names are resolved on this device and are never uploaded.", style = MaterialTheme.typography.bodyMedium)
+            Spacer(Modifier.height(8.dp))
+            if (state.contactsAllowed) Text("Contact lookup enabled", color = MaterialTheme.colorScheme.primary)
+            else OutlinedButton(onClick = onContacts) { Text("Allow contact access") }
+        }
+    }
+    if (confirmDisconnect) AlertDialog(onDismissRequest = { confirmDisconnect = false }, title = { Text("Disconnect receiver?") },
+        text = { Text("This removes the saved connection and clears loaded messages from the app. Your messages remain on the receiver.") },
+        confirmButton = { TextButton(onClick = { confirmDisconnect = false; onDisconnect() }) { Text("Disconnect") } },
+        dismissButton = { TextButton(onClick = { confirmDisconnect = false }) { Text("Cancel") } })
+}
