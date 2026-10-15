@@ -16,7 +16,11 @@ export default defineSchema({
   messages: defineTable({
     ...message,
     receivedAt: v.number(),
+    searchText: v.optional(v.string()),
+    conversation: v.optional(v.string()),
   })
     .index("by_key", ["key"])
-    .index("by_timestamp", ["timestamp"]),
+    .index("by_timestamp", ["timestamp"])
+    .index("by_conversation_timestamp", ["conversation", "timestamp"])
+    .searchIndex("search_messages", { searchField: "searchText" }),
 });
