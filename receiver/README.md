@@ -90,3 +90,30 @@ thread grouping and does not upload or group by contact names. After deploying,
 run `messages:rebuildSearch` as above to backfill conversation keys for existing
 messages as well as search text. Derived index fields are omitted from API
 responses.
+
+## Conversation inbox
+
+`GET /v1/conversations` uses the read token and returns
+`{"conversations":[{"key":"bank","number":"Bank","lastMessage":{...}}],"cursor":null}`.
+Each page contains up to 25 distinct conversations, ordered newest first.
+Pass a returned cursor as `?cursor=...` to continue. The last message body is
+limited to 256 Unicode code points; full bodies remain available in threads
+and search. The raw `/v1/messages` history endpoint remains available.
+
+Every new message gets a `conversationId` and normalized conversation key.
+Message insertion, conversation creation, and latest-preview updates happen
+in one mutation. Upload replays do not duplicate conversations; delayed older
+messages do not replace the latest preview. Equal timestamps use message keys
+as a deterministic tie-breaker. Conversation records retain the latest message
+ID and summary, with indexes for key lookup and latest-message ordering.
+
+After deploying, migrate existing messages with:
+
+```sh
+CONVEX_DEPLOYMENT=prod:peaceful-cuttlefish-556 npx convex run --prod messages:rebuildConversations '{"cursor":null}'
+```
+
+The action processes bounded batches and returns `assigned` and `cursor`.
+Continue with the returned cursor if non-null. It is safe to rerun and supports
+new uploads during migration. Original SMS data is preserved. Contacts remain
+local to Android; no read/unread feature is introduced by this migration.

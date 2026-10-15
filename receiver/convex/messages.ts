@@ -3,6 +3,7 @@ import { internalAction, internalMutation, internalQuery, type MutationCtx } fro
 import { internal } from "./_generated/api";
 import { paginationOptsValidator } from "convex/server";
 import { message } from "./schema";
+import type { Id } from "./_generated/dataModel";
 
 const incoming = v.object(message);
 type Incoming = typeof incoming.type;
@@ -15,6 +16,64 @@ export function conversationKey(number: string) {
 }
 const conversationFor = (item: Incoming) => conversationKey(item.direction === "sent" ? item.recipient : item.sender);
 
+/** Summaries are maintained in the message transaction, including during backfill. */
+async function assignConversation(ctx: MutationCtx, id: Id<"messages">, item: Incoming) {
+  const key = conversationFor(item);
+  const prior = await ctx.db.query("conversations").withIndex("by_key", q => q.eq("key", key)).unique();
+  const { key: messageKey, id: smsId, timestamp, sender, recipient, direction, body, simSlot } = item;
+  const summary = {
+    key, number: direction === "sent" ? recipient : sender,
+    lastMessageId: id, lastTimestamp: timestamp, lastKey: messageKey,
+    // Keep inbox pages small; the complete body remains in messages.
+    lastMessage: { key: messageKey, id: smsId, timestamp, sender, recipient, direction,
+      body: [...body].slice(0, 256).join(""), ...(simSlot === undefined ? {} : { simSlot }) },
+  };
+  let conversationId = prior?._id;
+  if (prior === null) conversationId = await ctx.db.insert("conversations", summary);
+  else if (timestamp > prior.lastTimestamp || (timestamp === prior.lastTimestamp && messageKey > prior.lastKey))
+    await ctx.db.patch(prior._id, summary);
+  await ctx.db.patch(id, { conversation: key, conversationId: conversationId! });
+}
+
+export const conversations = internalQuery({
+  args: { paginationOpts: paginationOptsValidator },
+  handler: async (ctx, { paginationOpts }) => {
+    const page = await ctx.db.query("conversations").withIndex("by_latest").order("desc").paginate(paginationOpts);
+    return { conversations: page.page.map(({ key, number, lastMessage }) => ({ key, number, lastMessage })),
+      cursor: page.isDone ? null : page.continueCursor };
+  },
+});
+
+export const backfillConversations = internalMutation({
+  args: { cursor: v.union(v.null(), v.string()) },
+  handler: async (ctx, { cursor }) => {
+    const page = await ctx.db.query("messages").paginate({ cursor, numItems: 100, maximumBytesRead: 1_000_000 });
+    let assigned = 0;
+    for (const item of page.page) {
+      if (item.conversationId === undefined || item.conversation !== conversationFor(item)) {
+        await assignConversation(ctx, item._id, item);
+        assigned++;
+      }
+    }
+    return { assigned, cursor: page.isDone ? null : page.continueCursor };
+  },
+});
+
+export const rebuildConversations = internalAction({
+  args: { cursor: v.union(v.null(), v.string()) },
+  handler: async (ctx, args): Promise<{ assigned: number; cursor: string | null }> => {
+    let cursor = args.cursor;
+    let assigned = 0;
+    for (let batch = 0; batch < 100; batch++) {
+      const page: { assigned: number; cursor: string | null } = await ctx.runMutation(internal.messages.backfillConversations, { cursor });
+      assigned += page.assigned;
+      cursor = page.cursor;
+      if (cursor === null) break;
+    }
+    return { assigned, cursor };
+  },
+});
+
 export const thread = internalQuery({
   args: { conversation: v.string(), paginationOpts: paginationOptsValidator },
   handler: async (ctx, { conversation, paginationOpts }) => {
@@ -22,7 +81,7 @@ export const thread = internalQuery({
       .withIndex("by_conversation_timestamp", (q) => q.eq("conversation", conversation))
       .order("desc").paginate(paginationOpts);
     return {
-      messages: result.page.map(({ _id, _creationTime, searchText, conversation, ...message }) => message),
+      messages: result.page.map(({ _id, _creationTime, searchText, conversation, conversationId, ...message }) => message),
       cursor: result.isDone ? null : result.continueCursor,
     };
   },
@@ -41,7 +100,7 @@ export const search = internalQuery({
       .withSearchIndex("search_messages", (q) => q.search("searchText", query))
       .paginate(paginationOpts);
     return {
-      messages: result.page.map(({ _id, _creationTime, searchText, conversation, ...message }) => message),
+      messages: result.page.map(({ _id, _creationTime, searchText, conversation, conversationId, ...message }) => message),
       cursor: result.isDone ? null : result.continueCursor,
     };
   },
@@ -84,7 +143,7 @@ export const list = internalQuery({
   handler: async (ctx, { paginationOpts }) => {
     const result = await ctx.db.query("messages").withIndex("by_timestamp").order("desc").paginate(paginationOpts);
     return {
-      messages: result.page.map(({ _id, _creationTime, searchText, conversation, ...message }) => message),
+      messages: result.page.map(({ _id, _creationTime, searchText, conversation, conversationId, ...message }) => message),
       cursor: result.isDone ? null : result.continueCursor,
     };
   },
@@ -96,7 +155,8 @@ async function store(ctx: MutationCtx, item: Incoming, receivedAt: number) {
     .withIndex("by_key", (q) => q.eq("key", item.key))
     .unique();
   if (!prior) {
-    await ctx.db.insert("messages", { ...item, receivedAt, searchText: searchText(item), conversation: conversationFor(item) });
+    const id = await ctx.db.insert("messages", { ...item, receivedAt, searchText: searchText(item) });
+    await assignConversation(ctx, id, item);
     return;
   }
   // A replayed key is accepted only with identical content, as in the PoC receiver.

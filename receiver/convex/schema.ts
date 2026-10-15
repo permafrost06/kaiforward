@@ -13,11 +13,22 @@ export const message = {
 };
 
 export default defineSchema({
+  conversations: defineTable({
+    key: v.string(),
+    number: v.string(),
+    lastMessageId: v.id("messages"),
+    lastTimestamp: v.number(),
+    lastKey: v.string(),
+    lastMessage: v.object({ ...message }),
+  })
+    .index("by_key", ["key"])
+    .index("by_latest", ["lastTimestamp", "lastKey"]),
   messages: defineTable({
     ...message,
     receivedAt: v.number(),
     searchText: v.optional(v.string()),
     conversation: v.optional(v.string()),
+    conversationId: v.optional(v.id("conversations")),
   })
     .index("by_key", ["key"])
     .index("by_timestamp", ["timestamp"])

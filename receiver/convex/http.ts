@@ -64,6 +64,26 @@ http.route({
 });
 
 http.route({
+  path: "/v1/conversations",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const token = process.env.KAIFORWARD_READ_TOKEN;
+    if (!token) return respond(503, { error: "Message viewing not configured" });
+    if (!sameSecret(request.headers.get("Authorization") ?? "", `Bearer ${token}`))
+      return respond(401, { error: "Unauthorized" });
+    const cursor = new URL(request.url).searchParams.get("cursor");
+    if (cursor !== null && (!cursor || cursor.length > 4096)) return respond(400, { error: "Invalid cursor" });
+    try {
+      return respond(200, await ctx.runQuery(internal.messages.conversations, { paginationOpts: { cursor, numItems: 25 } }));
+    } catch (error) {
+      if (error instanceof Error && /cursor|not valid JSON|Unexpected token/i.test(error.message))
+        return respond(400, { error: "Invalid conversation cursor" });
+      throw error;
+    }
+  }),
+});
+
+http.route({
   path: "/v1/messages",
   method: "GET",
   handler: httpAction(async (ctx, request) => {
