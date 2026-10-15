@@ -391,6 +391,28 @@ fail:
     exec(db, "ROLLBACK");
     return -1;
 }
+/* The latest outbox jobs for one SIM, newest first, without numbers or text. */
+int store_jobs(sqlite3 *db, int slot, char *json, size_t cap) {
+    sqlite3_stmt *q =
+        prepare(db, "SELECT id,status FROM outbox WHERE slot=? ORDER BY id DESC LIMIT 5");
+    if (!q)
+        return -1;
+    sqlite3_bind_int(q, 1, slot);
+    size_t used = (size_t)snprintf(json, cap, "{\"ok\":true,\"slot\":%d,\"jobs\":[", slot);
+    int rc, first = 1;
+    while ((rc = sqlite3_step(q)) == SQLITE_ROW && used < cap) {
+        const char *status = (const char *)sqlite3_column_text(q, 1);
+        used += (size_t)snprintf(json + used, cap - used, "%s{\"id\":%lld,\"status\":\"%s\"}",
+                                 first ? "" : ",", (long long)sqlite3_column_int64(q, 0),
+                                 status ? status : "");
+        first = 0;
+    }
+    sqlite3_finalize(q);
+    if (rc != SQLITE_DONE || used >= cap)
+        return -1;
+    used += (size_t)snprintf(json + used, cap - used, "]}\n");
+    return used >= cap ? -1 : 0;
+}
 void store_uncertain(sqlite3 *db, int slot) {
     sqlite3_stmt *q = prepare(
         db, "UPDATE outbox SET status='uncertain' WHERE status='submitting' AND (?=0 OR slot=?)");

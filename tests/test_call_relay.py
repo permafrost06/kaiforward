@@ -141,6 +141,25 @@ class CallRelayTests(unittest.IsolatedAsyncioTestCase):
         for bad in [[entry],[{**entry,'slot':2},None],[{**entry,'state':'eval'},None],[{**entry,'message':None},None]]:
             with self.assertRaises(ValueError):relay.validate_ussd({'ussd':bad})
 
+    async def test_sms_commands_and_outbox_state_are_validated(self):
+        self.assertEqual(relay.validate_command({'slot':2,'action':'sms','number':'+8801712345678','text':'হ্যালো\n2 hangup'}),
+                         '2 sms +8801712345678 হ্যালো\n2 hangup'.encode())
+        self.assertEqual(relay.validate_command({'slot':1,'action':'sms','number':'123','text':'😀'*35})[:10], b'1 sms 123 ')
+        for text in ['x'*160, '€'*80, 'Café @ 5£\n'*16, 'বা'*35]:
+            self.assertEqual(relay.validate_command({'slot':1,'action':'sms','number':'123','text':text}), f'1 sms 123 {text}'.encode())
+        for number, text in [('12','hi'),('1'*21,'hi'),('*123#','hi'),('+880 17','hi'),('১২৩','hi'),(123,'hi'),
+                             ('123',''),('123','x'*161),('123','€'*81),('123','বা'*35+'x'),('123','\t'*71),('123','😀'*36),('123','a\x00b'),('123','a\x1bb'),('123','\ud800'),('123',None)]:
+            with self.assertRaises(ValueError):relay.validate_command({'slot':1,'action':'sms','number':number,'text':text})
+        reader,writer = await self.connected_phone()
+        entry={'slot':1,'jobs':[{'id':4,'status':'sent'},{'id':3,'status':'uncertain'}]}
+        report={'slots':[{'slot':1,'calls':0,'state':-1},{'slot':2,'calls':0,'state':-1}],'media':'idle','sms':[entry,None]}
+        writer.write(relay.encode_frame(relay.STATE,json.dumps(report).encode()));await writer.drain()
+        self.assertEqual(await asyncio.wait_for(relay.read_frame(reader),1),(relay.PING,b''))
+        self.assertEqual(self.relay.public_state()['sms'],[entry,None])
+        for bad in [[entry],[{**entry,'slot':2},None],[{'slot':1,'jobs':[{'id':1,'status':'eval'}]},None],
+                    [{'slot':1,'jobs':[{'id':'1','status':'sent'}]},None],[{'slot':1,'jobs':[{'id':1,'status':'sent'}]*6},None]]:
+            with self.assertRaises(ValueError):relay.validate_sms({'sms':bad})
+
 
 if __name__ == '__main__':
     unittest.main()

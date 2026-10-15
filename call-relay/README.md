@@ -1,7 +1,7 @@
 # KaiForward call relay
 
 A small server that lets a browser answer, hang up and place calls on the
-phone, with two-way call audio, and run USSD codes such as balance checks. Convex receives SMS but cannot hold the
+phone, with two-way call audio, send SMS, and run USSD codes such as balance checks. Convex receives SMS but cannot hold the
 phone's long-lived audio connection. Run this server on a machine that the
 phone can reach over Tailscale.
 
@@ -119,6 +119,30 @@ kaiforward-native --call 1 ussd-cancel
 `error` (a modem error, `-1` lost modem connection, `-2` no answer), and an
 `id` that changes with every update.
 
+## SMS
+
+Sending SMS also needs the updated SMS service and call helper (see USSD
+below). Enter the recipient in the number field and the text in the message
+box, then press **Text SIM 1** or **Text SIM 2**. The phone sends one segment
+and does not split longer texts. Text that fits the GSM default alphabet
+(plain Latin letters, digits, common punctuation and a few accents) may be
+160 characters, with `^ { } [ ] ~ | \ €` counting as two. Any other character,
+such as an emoji, Bengali or a tab, switches the whole message to UCS-2 and
+limits it to 70 UTF-16 units (emoji count as two). Recipients are 3 to 20 digits
+with an optional leading `+`.
+
+The phone puts the message in its outbox and answers at once. The outbox
+sends it when the SIM is registered, so a message sent while the SIM is
+unavailable shows as queued until the SIM is ready. The status line under the
+box then follows the job through `sending` and `sent` or `failed`. A message is
+never resent. If the modem connection drops mid-send, the job is marked
+`uncertain`, and you should check with the recipient before sending it again.
+Sent messages go to Convex like received ones, with `direction` `sent`.
+
+From a root shell on the phone, `kaiforward-native --send 1 NUMBER TEXT`
+queues the same way, and `kaiforward-native --call 1 sms-read` prints the SIM's
+five most recent jobs as `{"id":…,"status":…}` with no numbers or text.
+
 ## systemd
 
 ```ini
@@ -148,11 +172,14 @@ length, then a 1-byte type, then the payload. The types are:
 - `HELLO` `{"protocol":1,"token":…}`
 - `STATE`
 - `DOWNLINK` and `UPLINK`: 320-byte, 8 kHz, 16-bit mono PCM
-- `COMMAND` and `RESULT`: call commands, and `ussd <code>` and
-  `ussd-cancel`. `STATE` carries a `ussd` array with each SIM's latest
-  exchange, or `null` for a SIM when the phone's SMS service predates USSD.
+- `COMMAND` and `RESULT`: call commands, `ussd <code>`, `ussd-cancel` and
+  `sms <number> <text>`. The SMS text runs to the end of the command and may
+  contain spaces and newlines. Its result is `{"ok":true,"job":…}` once the
+  message is queued. `STATE` carries a `ussd` array with each SIM's latest
+  exchange, or `null` for a SIM when the phone's SMS service predates USSD,
+  and an `sms` array with each SIM's recent outbox jobs, `null` likewise.
 - `START` and `STOP`
 - `PING`
 
 `tests/test_call_relay.py` covers authentication, framing, command certainty,
-audio ownership and USSD validation.
+audio ownership, and USSD and SMS validation.

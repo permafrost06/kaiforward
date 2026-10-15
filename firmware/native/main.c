@@ -239,7 +239,7 @@ int main(int argc, char **argv) {
                 if (fds[i].revents & (POLLIN | POLLHUP | POLLERR))
                     radio_read(&radios[i], db);
             if (fds[2].revents & POLLIN)
-                call_accept(controller, radios);
+                call_accept(controller, radios, db);
         }
         settings_http_tick(home, db, radios);
         int current_queued = store_count(db, "messages", "uploaded=0");

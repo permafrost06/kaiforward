@@ -151,7 +151,7 @@ static int session(const char *home, const char *override, const char *port_over
     int64_t next_status = 0, last_receive = monotonic_ms();
     char statuses[2][512] = {"{\"slot\":1,\"connected\":false}",
                              "{\"slot\":2,\"connected\":false}"};
-    char ussd[2][KF_USSD * 6 + 160];
+    char ussd[2][KF_USSD * 6 + 160], sms[2][600];
     while (running) {
         if (monotonic_ms() - last_receive > 8000)
             goto cleanup;
@@ -173,6 +173,10 @@ static int session(const char *home, const char *override, const char *port_over
                 if (control(home, command, ussd[i], sizeof(ussd[i])) ||
                     strncmp(ussd[i], supported, sizeof(supported) - 1))
                     strcpy(ussd[i], "null");
+                snprintf(command, sizeof(command), "%d sms-read", i + 1);
+                if (control(home, command, sms[i], sizeof(sms[i])) ||
+                    strncmp(sms[i], supported, sizeof(supported) - 1))
+                    strcpy(sms[i], "null");
             }
             int any_call = 0;
             for (int i = 0; i < 2; i++)
@@ -200,8 +204,9 @@ static int session(const char *home, const char *override, const char *port_over
             const char *media = audio.capture_pid > 0 ? "running" : *error ? "error" : "idle";
             int length = snprintf(report, sizeof(report),
                                   "{\"slots\":[%s,%s],\"media\":\"%s\",\"audio_error\":\"%s\","
-                                  "\"ussd\":[%s,%s]}",
-                                  statuses[0], statuses[1], media, error, ussd[0], ussd[1]);
+                                  "\"ussd\":[%s,%s],\"sms\":[%s,%s]}",
+                                  statuses[0], statuses[1], media, error, ussd[0], ussd[1],
+                                  sms[0], sms[1]);
             if (length < 0 || length >= (int)sizeof(report))
                 snprintf(report, sizeof(report),
                          "{\"slots\":[%s,%s],\"media\":\"%s\",\"audio_error\":\"%s\"}",
@@ -249,12 +254,13 @@ static int session(const char *home, const char *override, const char *port_over
                 puts("Native call relay connected over verified TLS.");
                 fflush(stdout);
             } else if (kind == COMMAND) {
-                if (size < 5 || size > 131 || memchr(body + 4, 0, size - 4))
+                char command[512], response[512];
+                if (size < 5 || size > 4 + sizeof(command) - 1 || memchr(body + 4, 0, size - 4))
                     goto cleanup;
-                char command[128], response[512];
                 memcpy(command, body + 4, size - 4);
                 command[size - 4] = 0;
-                if (strstr(command, " hangup")) {
+                /* Match the action itself, not SMS text that mentions it. */
+                if (!strcmp(command + 1, " hangup")) {
                     audio_stop(&audio);
                     media_slot = 0;
                     *error = 0;

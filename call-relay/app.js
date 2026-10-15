@@ -1,10 +1,11 @@
 'use strict';
 const el = id => document.getElementById(id);
 const ussdLabels = {waiting:'waiting for the network', reply:'reply needed', done:'done', failed:'failed', cancelled:'cancelled'};
+const smsLabels = {queued:'queued until the SIM is ready', submitting:'sending', sent:'sent', failed:'failed', uncertain:'result unknown; check with the recipient before sending again'};
 const labels = {'-2':'checking', '-1':'no call', 0:'connected', 1:'on hold', 2:'calling', 3:'ringing', 4:'incoming call', 5:'call waiting'};
 let socket, context, stream, node;
 let state = {phone_connected:false, slots:[]};
-let busy = false, ussdPending = false, seenActive = false, audioSlot = 0, micError = '';
+let busy = false, pending = '', pendingSlot = 0, smsJob = null, seenActive = false, audioSlot = 0, micError = '';
 
 function send(message) {
   if (socket?.readyState !== WebSocket.OPEN) throw new Error('Server connection is offline');
@@ -26,6 +27,10 @@ function ussdText(slot) {
     : u.error > 0 ? `: modem error ${u.error}` : '';
   return `SIM ${slot} USSD ${ussdLabels[u.state] ?? u.state}${reason}` + (u.message ? `\n${u.message}` : '');
 }
+function smsText() {
+  const job = smsJob && state.sms?.[smsJob.slot - 1]?.jobs.find(j => j.id === smsJob.id);
+  return job ? `SMS from SIM ${smsJob.slot} ${smsLabels[job.status] ?? job.status}` : '';
+}
 // Only one SIM can have a call at a time.
 const callSlot = () => [1, 2].find(slot => sim(slot).calls === 1) || 0;
 
@@ -41,6 +46,9 @@ function render() {
   for (const s of [1, 2]) el('ussd' + s).disabled = busy || !online || !sim(s).registered || ussd(s).state === 'waiting';
   el('ussdcancel').disabled = busy || !online || ![1, 2].some(ussdOpen);
   el('ussd').textContent = [1, 2].map(ussdText).filter(Boolean).join('\n\n');
+  // An older phone helper reports no outbox and cannot queue SMS.
+  for (const s of [1, 2]) el('sms' + s).disabled = busy || !online || !state.sms?.length;
+  el('smsstatus').textContent = smsText();
   el('audio').textContent = context ? 'Audio off' : 'Audio on';
   el('audio').disabled = !context && (!online || !slot);
   if (state.audio_error) el('notice').textContent = state.audio_error;
@@ -96,14 +104,17 @@ async function command(action, slot) {
   } catch (error) { busy = false; el('notice').textContent = error.message; stopAudio(); }
 }
 
-function ussdCommand(action, slot) {
+// USSD and SMS commands, which never touch call audio.
+function quietCommand(message) {
   try {
     busy = true; render();
-    send({type:'command', action, slot, code:el('code').value.trim()});
-    ussdPending = true;
+    send({type:'command', ...message});
+    pending = message.action === 'sms' ? 'sms' : 'ussd'; pendingSlot = message.slot;
     el('notice').textContent = 'Waiting for the phone';
   } catch (error) { busy = false; el('notice').textContent = error.message; render(); }
 }
+const ussdCommand = (action, slot) => quietCommand({action, slot, code:el('code').value.trim()});
+const smsCommand = slot => quietCommand({action:'sms', slot, number:el('number').value.trim(), text:el('text').value});
 
 function connect() {
   socket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/call`);
@@ -113,14 +124,17 @@ function connect() {
     const message = JSON.parse(data);
     if (message.type === 'state') state = message;
     if (message.type === 'result') {
-      const wasUssd = ussdPending;
-      busy = ussdPending = false;
-      el('notice').textContent = message.ok ? (wasUssd ? '' : 'Done') : (message.error || (message.uncertain ? 'Result unknown; check the call state before retrying' : `Phone refused (${message.result})`));
-      if (!message.ok && !message.uncertain && !wasUssd) stopAudio();
+      const kind = pending;
+      busy = false; pending = '';
+      if (kind === 'sms' && message.ok) { smsJob = {slot:pendingSlot, id:message.job}; el('text').value = ''; }
+      el('notice').textContent = message.ok ? (kind ? '' : 'Done')
+        : kind === 'sms' && message.uncertain ? 'SMS result unknown; check the outbox before sending again'
+        : (message.error || (message.uncertain ? 'Result unknown; check the call state before retrying' : `Phone refused (${message.result})`));
+      if (!message.ok && !message.uncertain && !kind) stopAudio();
     }
     render();
   };
-  socket.onclose = () => { state = {phone_connected:false, slots:[]}; busy = ussdPending = false; stopAudio(); setTimeout(connect, 2000); };
+  socket.onclose = () => { state = {phone_connected:false, slots:[]}; busy = false; pending = ''; stopAudio(); setTimeout(connect, 2000); };
 }
 
 el('answer').onclick = () => command('answer', callSlot());
@@ -129,6 +143,8 @@ el('dial1').onclick = () => command('dial', 1);
 el('dial2').onclick = () => command('dial', 2);
 el('ussd1').onclick = () => ussdCommand('ussd', 1);
 el('ussd2').onclick = () => ussdCommand('ussd', 2);
+el('sms1').onclick = () => smsCommand(1);
+el('sms2').onclick = () => smsCommand(2);
 el('ussdcancel').onclick = () => ussdCommand('ussd-cancel', [1, 2].find(ussdOpen));
 el('audio').onclick = async () => {
   try { context ? stopAudio() : await startAudio(callSlot()); } catch (error) { el('notice').textContent = error.message; }

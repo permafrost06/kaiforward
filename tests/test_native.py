@@ -579,8 +579,63 @@ class NativeTests(unittest.TestCase):
         time.sleep(.1)
         self.assertEqual(self.rows('SELECT status FROM outbox'), [('uncertain',)])
 
+    def control(self, command):
+        with socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET) as client:
+            client.settimeout(5)
+            client.connect(str(self.home / 'call.sock'))
+            client.send(command.encode())
+            return json.loads(client.recv(4096))
+
+    def sms_jobs(self, slot='1'):
+        result = subprocess.run([str(self.binary), '--home', str(self.home), '--call', slot, 'sms-read'], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0)
+        return json.loads(result.stdout)['jobs']
+
+    def test_control_socket_queues_sms_once_and_reports_its_status(self):
+        _, conn, _ = self.fake_modem()
+        self.assertEqual(self.sms_jobs(), [])
+        # Spaces, newlines and 70 UTF-16 units of Bengali stay in the text.
+        text = 'hangup 2 answer\n' + 'বা' * 27
+        queued = self.control('1 sms +8801712345678 ' + text)
+        self.assertTrue(queued['ok'])
+        request = read_frame(conn)
+        self.assertEqual(struct.unpack('<i', request[:4])[0], 25)
+        self.assertEqual(self.sms_jobs(), [{'id': queued['job'], 'status': 'submitting'}])
+        self.assertEqual(self.sms_jobs('2'), [])
+        token = struct.unpack('<i', request[4:8])[0]
+        send_frame(conn, struct.pack('<iii', 0, token, 0) + struct.pack('<i', 12) + parcel_string(None) + struct.pack('<i', 0))
+        eventually(lambda: self.sms_jobs() == [{'id': queued['job'], 'status': 'sent'}])
+        self.assertEqual(self.rows('SELECT direction,recipient,body,slot FROM messages'), [('sent', '+8801712345678', text, 1)])
+        events = (self.home / 'radio.events').read_text()
+        self.assertNotIn('8801712345678', events)
+        self.assertNotIn('বা', events)
+        for command in ['1 sms +8801712345678', '1 sms +8801712345678 ', '1 sms 12 short', '1 sms *123# text',
+                        '3 sms +8801712345678 text', '1 sms +8801712345678 ' + 'x' * 161, '1 sms +8801712345678 ' + 'বা' * 36, '1 sms +88017 a\x01']:
+            self.assertFalse(self.control(command)['ok'], command)
+        self.assertEqual(self.rows('SELECT COUNT(*) FROM outbox'), [(1,)])
+        conn.settimeout(.1)
+        with self.assertRaises(socket.timeout):
+            conn.recv(1)
+
+    def test_native_send_uses_gsm_alphabet_for_160_characters_and_utf16_otherwise(self):
+        def submit(dcs, udl, body):
+            return ('01000D91881017325476F800' + f'{dcs:02X}{udl:02X}' + body.hex()).upper()
+        def packed(values):
+            return sum(v << (i * 7) for i, v in enumerate(values)).to_bytes((len(values) * 7 + 7) // 8, 'little')
+        euro = 'Price 5€ @ Café\n' + 'x' * 143
+        cases = [('hello', submit(0, 5, bytes.fromhex('E8329BFD06'))),
+                 (euro, submit(0, 160, packed([80, 114, 105, 99, 101, 32, 53, 27, 101, 32, 0, 32, 67, 97, 102, 5, 10] + [120] * 143))),
+                 ('x' * 161, None), ('tab\there', submit(8, 16, 'tab\there'.encode('utf-16-be'))),
+                 ('বা' * 35, submit(8, 140, ('বা' * 35).encode('utf-16-be'))), ('বা' * 35 + 'x', None),
+                 ('€' * 80, submit(0, 160, packed([27, 101] * 80))), ('€' * 81, None)]
+        for body, pdu in cases:
+            with self.subTest(body=body[:20]):
+                self.assertEqual(self.queue_send(body).returncode, 0 if pdu else 1)
+                if pdu:
+                    self.assertEqual(self.rows('SELECT pdu FROM outbox ORDER BY id DESC LIMIT 1'), [(pdu,)])
+
     def test_native_send_refuses_invalid_or_overlong_commands(self):
-        for body, slot in [('x'*71, '1'), ('valid', '3'), ('', '1')]:
+        for body, slot in [('x'*161, '1'), ('valid', '3'), ('', '1')]:
             self.assertNotEqual(self.queue_send(body, slot).returncode, 0)
         self.assertEqual(self.rows('SELECT COUNT(*) FROM outbox'), [(0,)])
 

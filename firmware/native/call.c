@@ -61,7 +61,7 @@ int call_listen(const char *home) {
     }
     return fd;
 }
-void call_accept(int listener, Radio radios[2]) {
+void call_accept(int listener, Radio radios[2], sqlite3 *db) {
     int fd = accept4(listener, NULL, NULL, SOCK_CLOEXEC | SOCK_NONBLOCK);
     if (fd < 0)
         return;
@@ -79,13 +79,30 @@ void call_accept(int listener, Radio radios[2]) {
     int flags = fcntl(fd, F_GETFL, 0);
     if (flags >= 0)
         fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
-    char command[128], action[16], number[41] = "", extra;
+    /* Room for "2 sms", a 21-character recipient and 160 GSM characters of UTF-8. */
+    char command[512], action[16], number[41] = "", extra;
     ssize_t n = recv(fd, command, sizeof(command) - 1, MSG_TRUNC);
     if (n <= 0 || n >= (ssize_t)sizeof(command) || memchr(command, 0, n)) {
         reply(fd, "{\"ok\":false,\"error\":\"Invalid command\"}\n");
         return;
     }
     command[n] = 0;
+    if ((command[0] == '1' || command[0] == '2') && !strncmp(command + 1, " sms ", 5)) {
+        /* The text runs to the end and may contain spaces. Queued once: the
+         * outbox sends it when the SIM is ready and never resends it. */
+        char *recipient = command + 6, *text = strchr(recipient, ' ');
+        int64_t job = -1;
+        if (text) {
+            *text++ = 0;
+            job = store_send(db, command[0] - '0', recipient, text);
+        }
+        char body[80];
+        snprintf(body, sizeof(body), "{\"ok\":true,\"job\":%lld}\n", (long long)job);
+        reply(fd, job < 0 ? "{\"ok\":false,\"error\":\"SMS needs a numeric recipient and 1 to 160 GSM "
+                            "characters or 70 UTF-16 units\"}\n"
+                          : body);
+        return;
+    }
     int slot, fields = sscanf(command, "%d %15s %40s %c", &slot, action, number, &extra);
     if (fields < 2 || slot < 1 || slot > 2 || fields > 3) {
         reply(fd, "{\"ok\":false,\"error\":\"Invalid command\"}\n");
@@ -106,6 +123,12 @@ void call_accept(int listener, Radio radios[2]) {
         char body[KF_USSD * 6 + 160];
         reply(fd, ussd_read(r, body, sizeof(body)) ? "{\"ok\":false,\"error\":\"USSD unavailable\"}\n"
                                                    : body);
+        return;
+    }
+    if (!strcmp(action, "sms-read") && fields == 2) {
+        char body[600];
+        reply(fd, store_jobs(db, slot, body, sizeof(body)) ? "{\"ok\":false,\"error\":\"SMS outbox unavailable\"}\n"
+                                                           : body);
         return;
     }
     if (!strcmp(action, "ussd") || !strcmp(action, "ussd-cancel")) {

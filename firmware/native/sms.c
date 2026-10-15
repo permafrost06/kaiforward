@@ -62,6 +62,21 @@ static unsigned extension(unsigned c) {
         return 0;
     }
 }
+/* Stores cp in the default alphabet as 1 septet, or 2 behind the escape. */
+int gsm_septets(unsigned cp, unsigned char out[2]) {
+    for (unsigned i = 0; i < 128; i++)
+        if (cp && gsm[i] == cp) {
+            out[0] = (unsigned char)i;
+            return 1;
+        }
+    for (unsigned i = 0; i < 128; i++)
+        if (cp && extension(i) == cp) {
+            out[0] = 27;
+            out[1] = (unsigned char)i;
+            return 2;
+        }
+    return 0;
+}
 static int septets(const unsigned char *p, size_t bytes, int start, int count, char *out,
                    size_t cap) {
     size_t n = 0;

@@ -28,6 +28,13 @@ HELLO, STATE, DOWNLINK, COMMAND, RESULT, START, STOP, UPLINK, PING = range(1, 10
 MAX_FRAME = 8192
 USSD_CODE = re.compile(r'[0-9*#+]{1,40}')
 USSD_STATES = ('idle', 'waiting', 'reply', 'done', 'failed', 'cancelled')
+SMS_STATES = ('queued', 'submitting', 'sent', 'failed', 'uncertain')
+# One segment, as the phone does not split texts: 160 septets of the GSM
+# default alphabet (escaped characters take two), otherwise 70 UTF-16 units.
+GSM_BASIC = ('@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞ\x1bÆæßÉ !"#¤%&\'()*+,-./0123456789:;<=>?'
+             '¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà')
+GSM_ESCAPED = '^{}\\[~]|€'
+SMS_SEPTETS, SMS_UNITS = 160, 70
 PAGES = {'/': ('index.html', 'text/html; charset=utf-8'),
          '/app.js': ('app.js', 'text/javascript; charset=utf-8'),
          '/audio-worklet.js': ('audio-worklet.js', 'text/javascript; charset=utf-8')}
@@ -47,12 +54,36 @@ def encode_frame(kind, payload=b''):
     return struct.pack('>I', len(payload) + 1) + bytes([kind]) + payload
 
 
+def valid_number(number, shortest=1, longest=40):
+    digits = number[1:] if isinstance(number, str) and number.startswith('+') else number
+    return isinstance(digits, str) and digits.isascii() and digits.isdigit() and \
+        shortest <= len(digits) <= longest and len(number) <= 40
+
+
+def valid_text(text):
+    if not isinstance(text, str) or not text or any(c < ' ' and c not in '\n\r\t' for c in text):
+        return False
+    if all(c in GSM_BASIC or c in GSM_ESCAPED for c in text):
+        return len(text) + sum(c in GSM_ESCAPED for c in text) <= SMS_SEPTETS
+    try:
+        return len(text.encode('utf-16-le')) // 2 <= SMS_UNITS
+    except UnicodeEncodeError:  # A lone surrogate.
+        return False
+
+
 def validate_command(message):
     slot = message.get('slot')
     action = message.get('action')
-    if type(slot) is not int or slot not in (1, 2) or action not in ('answer', 'hangup', 'dial', 'ussd', 'ussd-cancel'):
+    if type(slot) is not int or slot not in (1, 2) or action not in ('answer', 'hangup', 'dial', 'ussd', 'ussd-cancel', 'sms'):
         raise ValueError('Invalid call operation')
     command = f'{slot} {action}'
+    if action == 'sms':
+        number, text = message.get('number', ''), message.get('text', '')
+        if not valid_number(number, 3, 20):
+            raise ValueError('Enter a telephone number of 3 to 20 digits')
+        if not valid_text(text):
+            raise ValueError(f'Enter a message of 1 to {SMS_SEPTETS} characters, or {SMS_UNITS} with emoji or non-Latin text')
+        return f'{command} {number} {text}'.encode()
     if action == 'ussd':
         code = message.get('code', '')
         if not isinstance(code, str) or not USSD_CODE.fullmatch(code):
@@ -60,8 +91,7 @@ def validate_command(message):
         command += ' ' + code
     if action == 'dial':
         number = message.get('number', '')
-        digits = number[1:] if isinstance(number, str) and number.startswith('+') else number
-        if not isinstance(digits, str) or not digits or not digits.isascii() or not digits.isdigit() or len(number) > 40:
+        if not valid_number(number):
             raise ValueError('Enter a telephone number')
         command += ' ' + number
     return command.encode('ascii')
@@ -81,6 +111,23 @@ def validate_ussd(report):
             raise ValueError('Invalid USSD state')
     return [entry and {k: entry[k] for k in ('slot', 'id', 'state', 'type', 'error', 'message')}
             for entry in ussd]
+
+
+def validate_sms(report):
+    """Recent outbox jobs per SIM; [] when the phone's helper predates SMS sending."""
+    sms = report.get('sms', [])
+    if not isinstance(sms, list) or len(sms) not in (0, 2):
+        raise ValueError('Invalid SMS state')
+    for slot, entry in enumerate(sms, 1):
+        if entry is not None and not (
+                isinstance(entry, dict) and entry.get('slot') == slot and
+                isinstance(entry.get('jobs'), list) and len(entry['jobs']) <= 5 and
+                all(isinstance(job, dict) and type(job.get('id')) is int and
+                    job.get('status') in SMS_STATES for job in entry['jobs'])):
+            raise ValueError('Invalid SMS state')
+    return [entry and {'slot': entry['slot'], 'jobs': [{'id': job['id'], 'status': job['status']}
+                                                       for job in entry['jobs']]}
+            for entry in sms]
 
 
 class Relay:
@@ -143,7 +190,7 @@ class Relay:
                         raise ValueError('Invalid phone state')
                     self.state = {'phone_connected': True, 'slots': report['slots'],
                                   'media': report.get('media', 'idle'), 'audio_error': report.get('audio_error', ''),
-                                  'ussd': validate_ussd(report)}
+                                  'ussd': validate_ussd(report), 'sms': validate_sms(report)}
                     self.last_state = time.monotonic()
                     # The phone stops its PCM streams if this acknowledgement stops
                     # arriving, even when TCP hasn't noticed a network outage yet.

@@ -4,6 +4,8 @@
 <p id="status">Connecting</p>
 <p><button id="answer" disabled>Answer</button> <button id="hangup" disabled>Hang up</button> <button id="audio" disabled>Audio on</button></p>
 <p><input id="number" type="tel" autocomplete="off" maxlength="40" placeholder="Number"> <button id="dial1" disabled>Call SIM 1</button> <button id="dial2" disabled>Call SIM 2</button></p>
+<p><textarea id="text" rows="3" cols="35" maxlength="160" placeholder="SMS to the number above, up to 160 characters (70 with emoji or non-Latin text)"></textarea> <button id="sms1" disabled>Text SIM 1</button> <button id="sms2" disabled>Text SIM 2</button></p>
+<p id="smsstatus"></p>
 <p><input id="code" autocomplete="off" maxlength="40" placeholder="USSD code, e.g. *123#"> <button id="ussd1" disabled>USSD SIM 1</button> <button id="ussd2" disabled>USSD SIM 2</button> <button id="ussdcancel" disabled>Cancel USSD</button></p>
 <pre id="ussd"></pre>
 <p id="notice"></p>
