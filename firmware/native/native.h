@@ -9,6 +9,8 @@
 #define KF_TEXT 2048
 #define KF_PDU 1024
 #define KF_NETWORKS 16
+#define KF_USSD 512
+enum { USSD_IDLE, USSD_WAITING, USSD_REPLY, USSD_DONE, USSD_FAILED, USSD_CANCELLED };
 typedef struct {
     char ssid[33];
     int signal, security; /* 0 open, 1 WPA PSK, 2 unsupported */
@@ -33,6 +35,10 @@ typedef struct {
     int subscription_attempted;
     int app_type;
     char aid[129];
+    /* Latest USSD exchange; one per slot. The id changes on every update. */
+    int ussd_state, ussd_type, ussd_error, ussd_token, ussd_id;
+    int64_t ussd_since;
+    char ussd_message[KF_USSD];
 } Radio;
 typedef struct {
     const unsigned char *data;
@@ -82,6 +88,8 @@ int store_sent(sqlite3 *db, int64_t job, int success);
 void store_uncertain(sqlite3 *db, int slot);
 void radio_send_queued(Radio *r, sqlite3 *db);
 int radio_call(Radio *r, int action, const char *number, int client);
+int radio_ussd(Radio *r, const char *code, int client);
+int ussd_read(const Radio *r, char *json, size_t cap);
 int call_listen(const char *home);
 void call_accept(int listener, Radio radios[2]);
 int call_client(const char *home, int slot, const char *action, const char *number);

@@ -151,6 +151,7 @@ static int session(const char *home, const char *override, const char *port_over
     int64_t next_status = 0, last_receive = monotonic_ms();
     char statuses[2][512] = {"{\"slot\":1,\"connected\":false}",
                              "{\"slot\":2,\"connected\":false}"};
+    char ussd[2][KF_USSD * 6 + 160];
     while (running) {
         if (monotonic_ms() - last_receive > 8000)
             goto cleanup;
@@ -166,6 +167,12 @@ static int session(const char *home, const char *override, const char *port_over
                 if (control(home, command, statuses[i], sizeof(statuses[i])))
                     snprintf(statuses[i], sizeof(statuses[i]),
                              "{\"slot\":%d,\"connected\":false,\"calls\":0,\"state\":-2}", i + 1);
+                snprintf(command, sizeof(command), "%d ussd-read", i + 1);
+                /* An older SMS service refuses ussd-read; report no USSD. */
+                static const char supported[] = "{\"ok\":true,";
+                if (control(home, command, ussd[i], sizeof(ussd[i])) ||
+                    strncmp(ussd[i], supported, sizeof(supported) - 1))
+                    strcpy(ussd[i], "null");
             }
             int any_call = 0;
             for (int i = 0; i < 2; i++)
@@ -189,14 +196,16 @@ static int session(const char *home, const char *override, const char *port_over
                 audio_stop(&audio);
                 strcpy(error, "Phone audio stream stopped");
             }
-            char report[1400];
-            snprintf(report, sizeof(report),
-                     "{\"slots\":[%s,%s],\"media\":\"%s\",\"audio_error\":\"%s\"}", statuses[0],
-                     statuses[1],
-                     audio.capture_pid > 0 ? "running"
-                     : *error              ? "error"
-                                           : "idle",
-                     error);
+            char report[8000];
+            const char *media = audio.capture_pid > 0 ? "running" : *error ? "error" : "idle";
+            int length = snprintf(report, sizeof(report),
+                                  "{\"slots\":[%s,%s],\"media\":\"%s\",\"audio_error\":\"%s\","
+                                  "\"ussd\":[%s,%s]}",
+                                  statuses[0], statuses[1], media, error, ussd[0], ussd[1]);
+            if (length < 0 || length >= (int)sizeof(report))
+                snprintf(report, sizeof(report),
+                         "{\"slots\":[%s,%s],\"media\":\"%s\",\"audio_error\":\"%s\"}",
+                         statuses[0], statuses[1], media, error);
             if (send_frame(&ssl, network.fd, STATE, report, strlen(report)))
                 goto cleanup;
             next_status = monotonic_ms() + 1000;

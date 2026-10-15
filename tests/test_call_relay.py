@@ -122,6 +122,25 @@ class CallRelayTests(unittest.IsolatedAsyncioTestCase):
                         {'slot':2,'action':'dial','number':'১২৩'},{'slot':2,'action':'exec'}]:
             with self.assertRaises(ValueError):relay.validate_command(message)
 
+    async def test_ussd_commands_and_state_are_validated(self):
+        self.assertEqual(relay.validate_command({'slot':1,'action':'ussd','code':'*123*1#'}), b'1 ussd *123*1#')
+        self.assertEqual(relay.validate_command({'slot':2,'action':'ussd-cancel'}), b'2 ussd-cancel')
+        for code in ['', 'abc', '*123#\n2 answer', '*1 2#', '১২৩', '1'*41, 7]:
+            with self.assertRaises(ValueError):relay.validate_command({'slot':1,'action':'ussd','code':code})
+        reader,writer = await self.connected_phone()
+        entry={'slot':1,'id':3,'state':'reply','type':1,'error':0,'message':'1 Balance'}
+        report={'slots':[{'slot':1,'calls':0,'state':-1},{'slot':2,'calls':0,'state':-1}],'media':'idle','ussd':[entry,None]}
+        writer.write(relay.encode_frame(relay.STATE,json.dumps(report).encode()));await writer.drain()
+        self.assertEqual(await asyncio.wait_for(relay.read_frame(reader),1),(relay.PING,b''))
+        self.assertEqual(self.relay.public_state()['ussd'],[entry,None])
+        # A phone helper without USSD support still reports calls.
+        del report['ussd']
+        writer.write(relay.encode_frame(relay.STATE,json.dumps(report).encode()));await writer.drain()
+        self.assertEqual(await asyncio.wait_for(relay.read_frame(reader),1),(relay.PING,b''))
+        self.assertEqual(self.relay.public_state()['ussd'],[])
+        for bad in [[entry],[{**entry,'slot':2},None],[{**entry,'state':'eval'},None],[{**entry,'message':None},None]]:
+            with self.assertRaises(ValueError):relay.validate_ussd({'ussd':bad})
+
 
 if __name__ == '__main__':
     unittest.main()

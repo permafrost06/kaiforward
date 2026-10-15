@@ -35,6 +35,18 @@ void call_reply(Radio *r, int result) {
     r->control_fd = -1;
     r->control_token = 0;
 }
+int ussd_read(const Radio *r, char *json, size_t cap) {
+    static const char *states[] = {"idle", "waiting", "reply", "done", "failed", "cancelled"};
+    char message[KF_USSD * 6 + 8];
+    if (json_string(message, sizeof(message), r->ussd_message) < 0)
+        return -1;
+    int n = snprintf(json, cap,
+                     "{\"ok\":true,\"slot\":%d,\"id\":%d,\"state\":\"%s\",\"type\":%d,"
+                     "\"error\":%d,\"message\":%s}\n",
+                     r->slot, r->ussd_id, states[r->ussd_state], r->ussd_type, r->ussd_error,
+                     message);
+    return n < 0 || (size_t)n >= cap ? -1 : 0;
+}
 int call_listen(const char *home) {
     struct sockaddr_un a;
     if (address(&a, home))
@@ -90,6 +102,20 @@ void call_accept(int listener, Radio radios[2]) {
         reply(fd, body);
         return;
     }
+    if (!strcmp(action, "ussd-read") && fields == 2) {
+        char body[KF_USSD * 6 + 160];
+        reply(fd, ussd_read(r, body, sizeof(body)) ? "{\"ok\":false,\"error\":\"USSD unavailable\"}\n"
+                                                   : body);
+        return;
+    }
+    if (!strcmp(action, "ussd") || !strcmp(action, "ussd-cancel")) {
+        /* Sent once like a call operation; the network's text arrives later. */
+        int send = !action[4];
+        if (fields != 2 + send || (send && radios[2 - slot].calls) ||
+            radio_ussd(r, send ? number : NULL, fd))
+            reply(fd, "{\"ok\":false,\"error\":\"USSD state does not allow this operation\"}\n");
+        return;
+    }
     int operation = !strcmp(action, "answer") && fields == 2   ? 1
                     : !strcmp(action, "hangup") && fields == 2 ? 2
                     : !strcmp(action, "dial") && fields == 3   ? 3
@@ -118,7 +144,7 @@ int call_client(const char *home, int slot, const char *action, const char *numb
         fprintf(stderr, "Native call controller unavailable\n");
         return 1;
     }
-    char response[512];
+    char response[KF_USSD * 6 + 160];
     ssize_t n = recv(fd, response, sizeof(response) - 1, MSG_TRUNC);
     close(fd);
     if (n <= 0 || n >= (ssize_t)sizeof(response)) {

@@ -482,6 +482,76 @@ class NativeTests(unittest.TestCase):
         with self.assertRaises(socket.timeout):
             conn.recv(1)
 
+    def ussd(self, *args):
+        result = subprocess.run([str(self.binary), '--home', str(self.home), '--call', '1', *args], capture_output=True, text=True)
+        return result.returncode, json.loads(result.stdout) if result.stdout else None
+
+    def ussd_request(self, conn, args, expected_code, expected=None):
+        command = self.process('--call', '1', *args)
+        request = read_frame(conn)
+        code, token = struct.unpack_from('<ii', request)
+        self.assertEqual(code, expected_code)
+        if expected is not None:
+            self.assertEqual(request[8:], parcel_string(expected))
+        send_frame(conn, struct.pack('<iii', 0, token, 0))
+        output, _ = command.communicate(timeout=3)
+        self.assertEqual(command.returncode, 0)
+        self.assertTrue(json.loads(output)['ok'])
+        # The control reply also refreshes the call list.
+        query = read_frame(conn)
+        self.assertEqual(struct.unpack_from('<i', query)[0], 9)
+        send_frame(conn, struct.pack('<iii', 0, struct.unpack_from('<i', query, 4)[0], 0) + struct.pack('<i', 0))
+
+    def ussd_event(self, conn, kind, message=None):
+        strings = [kind] if message is None else [kind, message]
+        send_frame(conn, struct.pack('<iii', 1, 1006, len(strings)) + b''.join(map(parcel_string, strings)))
+
+    def test_ussd_session_reply_and_result_are_readable(self):
+        _, conn, _ = self.fake_modem()
+        self.call_state(conn, 0)
+        self.assertEqual(self.ussd('ussd-read')[1]['state'], 'idle')
+        self.ussd_request(conn, ('ussd', '*123#'), 29, '*123#')
+        _, state = self.ussd('ussd-read')
+        self.assertEqual((state['state'], state['message']), ('waiting', ''))
+        # A second code cannot start while the network has not answered.
+        self.assertNotEqual(self.ussd('ussd', '*124#')[0], 0)
+        self.ussd_event(conn, '1', 'Menu\n1 বাকি "balance"')
+        menu = eventually(lambda: (lambda s: s['state'] == 'reply' and s)(self.ussd('ussd-read')[1]))
+        self.assertEqual((menu['type'], menu['message']), (1, 'Menu\n1 বাকি "balance"'))
+        self.ussd_request(conn, ('ussd', '1'), 29, '1')
+        self.ussd_event(conn, '0', 'Balance 10 Tk')
+        done = eventually(lambda: (lambda s: s['state'] == 'done' and s)(self.ussd('ussd-read')[1]))
+        self.assertEqual(done['message'], 'Balance 10 Tk')
+        self.assertGreater(done['id'], menu['id'])
+        self.assertEqual(self.ussd('ussd-read')[1]['slot'], 1)
+        events = (self.home / 'radio.events').read_text()
+        self.assertIn('event code=1006', events)
+        self.assertNotIn('Balance', events)
+
+    def test_ussd_cancel_errors_and_invalid_codes(self):
+        _, conn, _ = self.fake_modem()
+        self.call_state(conn, 0)
+        self.assertNotEqual(self.ussd('ussd-cancel')[0], 0)
+        for code in ['x', '*123#;', '1' * 41]:
+            self.assertNotEqual(self.ussd('ussd', code)[0], 0)
+        self.ussd_request(conn, ('ussd', '*121#'), 29, '*121#')
+        self.ussd_request(conn, ('ussd-cancel',), 30)
+        self.assertEqual(self.ussd('ussd-read')[1]['state'], 'cancelled')
+        # A modem error fails the exchange without a network answer.
+        command = self.process('--call', '1', 'ussd', '*999#')
+        request = read_frame(conn)
+        send_frame(conn, struct.pack('<iii', 0, struct.unpack_from('<i', request, 4)[0], 2))
+        command.communicate(timeout=3)
+        self.assertNotEqual(command.returncode, 0)
+        query = read_frame(conn)
+        send_frame(conn, struct.pack('<iii', 0, struct.unpack_from('<i', query, 4)[0], 0) + struct.pack('<i', 0))
+        failed = self.ussd('ussd-read')[1]
+        self.assertEqual((failed['state'], failed['error']), ('failed', 2))
+        # Unsupported codes are reported by the network, not the request.
+        self.ussd_event(conn, '4')
+        eventually(lambda: self.ussd('ussd-read')[1]['type'] == 4)
+        self.assertEqual(self.ussd('ussd-read')[1]['state'], 'failed')
+
     def test_native_send_archives_only_modem_confirmed_success(self):
         self.assertEqual(self.queue_send().returncode, 0)
         _, conn, _ = self.fake_modem()

@@ -112,8 +112,26 @@ static size_t put_string(unsigned char *p, const char *s) {
         p[4 + i * 2] = (unsigned char)s[i];
     return 4 + (((n + 1) * 2 + 3) & ~(size_t)3);
 }
+static void ussd_set(Radio *r, int state, int type, int error, const char *message) {
+    size_t n = strlen(message);
+    if (n >= sizeof(r->ussd_message)) {
+        /* Never split a UTF-8 sequence; real USSD text is far shorter. */
+        n = sizeof(r->ussd_message) - 1;
+        while (n && ((unsigned char)message[n] & 0xc0) == 0x80)
+            n--;
+    }
+    memcpy(r->ussd_message, message, n);
+    r->ussd_message[n] = 0;
+    r->ussd_state = state;
+    r->ussd_type = type;
+    r->ussd_error = error;
+    r->ussd_token = 0;
+    r->ussd_id++;
+}
 void radio_close(Radio *r) {
     call_reply(r, -1);
+    if (r->ussd_state == USSD_WAITING || r->ussd_state == USSD_REPLY)
+        ussd_set(r, USSD_FAILED, -1, -1, "");
     if (r->fd >= 0) {
         trace(r, "disconnect", 0, 0);
         close(r->fd);
@@ -141,6 +159,7 @@ void radio_init(Radio *r, int slot) {
     r->call_state = -2;
     r->slot = slot;
     r->radio = r->sim = r->registered = r->active_app = -1;
+    r->ussd_type = -1;
 }
 static int request(Radio *r, int code, const unsigned char *args, size_t size) {
     if (r->fd < 0 || size > 1000)
@@ -219,6 +238,39 @@ int radio_call(Radio *r, int action, const char *number, int client) {
     r->control_fd = client;
     r->control_token = token;
     r->control_at = monotonic_ms();
+    return 0;
+}
+int radio_ussd(Radio *r, const char *code, int client) {
+    if (r->fd < 0 || r->control_fd >= 0 || r->sim != 1 || r->active_app != 5 ||
+        r->registered != 1)
+        return -1;
+    unsigned char args[128];
+    size_t size = 0;
+    int request_code = 30; /* RIL_REQUEST_CANCEL_USSD */
+    if (code) {
+        /* A new code, or the answer while the network waits for one. */
+        size_t n = strlen(code);
+        if (!n || n > 40 || r->ussd_state == USSD_WAITING)
+            return -1;
+        for (size_t i = 0; i < n; i++)
+            if ((code[i] < '0' || code[i] > '9') && code[i] != '*' && code[i] != '#' &&
+                code[i] != '+')
+                return -1;
+        request_code = 29; /* RIL_REQUEST_SEND_USSD */
+        size = put_string(args, code);
+    } else if (r->ussd_state != USSD_WAITING && r->ussd_state != USSD_REPLY)
+        return -1;
+    int token = request(r, request_code, args, size);
+    if (token < 1)
+        return -1;
+    r->control_fd = client;
+    r->control_token = token;
+    r->control_at = monotonic_ms();
+    if (code) {
+        ussd_set(r, USSD_WAITING, -1, 0, "");
+        r->ussd_token = token;
+        r->ussd_since = monotonic_ms();
+    }
     return 0;
 }
 static void ack(Radio *r, int success) { ints(r, 37, 2, success, success ? 0 : 0xd3); }
@@ -338,6 +390,15 @@ int radio_handle(Radio *r, sqlite3 *db, const unsigned char *data, size_t size) 
             }
             return store_sent(db, job, error == 0);
         }
+        /* The network's answer arrives separately as RIL_UNSOL_ON_USSD. */
+        if (request_code == 29 && code == r->ussd_token) {
+            r->ussd_token = 0;
+            if (error)
+                ussd_set(r, USSD_FAILED, -1, error, "");
+        }
+        if (request_code == 30 && !error &&
+            (r->ussd_state == USSD_WAITING || r->ussd_state == USSD_REPLY))
+            ussd_set(r, USSD_CANCELLED, -1, 0, "");
         if (error) {
             if (request_code == 9) {
                 r->call_state = -2;
@@ -405,6 +466,20 @@ int radio_handle(Radio *r, sqlite3 *db, const unsigned char *data, size_t size) 
         request(r, 9, NULL, 0);
     } else if (code == 1002)
         request(r, 20, NULL, 0);
+    else if (code == 1006) {
+        /* RIL_UNSOL_ON_USSD: type "0".."5", then the decoded text if any. */
+        int count = parcel_int(&p);
+        char type[8], message[KF_TEXT] = "";
+        if (p.error || count < 1 || count > 8 || parcel_string(&p, type, sizeof(type)) ||
+            (count > 1 && parcel_string(&p, message, sizeof(message))))
+            return -1;
+        int t = type[0] >= '0' && type[0] <= '5' && !type[1] ? type[0] - '0' : -1;
+        ussd_set(r,
+                 t == 1                         ? USSD_REPLY
+                 : t == 0 || t == 2 || t == 3 ? USSD_DONE
+                                              : USSD_FAILED,
+                 t, 0, message);
+    }
     else if (code == 1019) {
         r->subscription_attempted = 0;
         request(r, 1, NULL, 0);
@@ -443,6 +518,8 @@ int radio_handle(Radio *r, sqlite3 *db, const unsigned char *data, size_t size) 
 void radio_tick(Radio *r, sqlite3 *db, const char *socket_dir) {
     (void)db;
     int64_t now = monotonic_ms();
+    if (r->ussd_state == USSD_WAITING && now - r->ussd_since > 60000)
+        ussd_set(r, USSD_FAILED, -1, -2, "");
     if (r->fd >= 0) {
         if (r->control_fd >= 0 && now - r->control_at > 5000)
             call_reply(r, -1);

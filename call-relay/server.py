@@ -11,6 +11,7 @@ from contextlib import suppress
 import hmac
 import json
 from pathlib import Path
+import re
 import signal
 import ssl
 import struct
@@ -25,6 +26,8 @@ from websockets.http11 import Response
 ASSETS = Path(__file__).resolve().parent
 HELLO, STATE, DOWNLINK, COMMAND, RESULT, START, STOP, UPLINK, PING = range(1, 10)
 MAX_FRAME = 8192
+USSD_CODE = re.compile(r'[0-9*#+]{1,40}')
+USSD_STATES = ('idle', 'waiting', 'reply', 'done', 'failed', 'cancelled')
 PAGES = {'/': ('index.html', 'text/html; charset=utf-8'),
          '/app.js': ('app.js', 'text/javascript; charset=utf-8'),
          '/audio-worklet.js': ('audio-worklet.js', 'text/javascript; charset=utf-8')}
@@ -47,9 +50,14 @@ def encode_frame(kind, payload=b''):
 def validate_command(message):
     slot = message.get('slot')
     action = message.get('action')
-    if type(slot) is not int or slot not in (1, 2) or action not in ('answer', 'hangup', 'dial'):
+    if type(slot) is not int or slot not in (1, 2) or action not in ('answer', 'hangup', 'dial', 'ussd', 'ussd-cancel'):
         raise ValueError('Invalid call operation')
     command = f'{slot} {action}'
+    if action == 'ussd':
+        code = message.get('code', '')
+        if not isinstance(code, str) or not USSD_CODE.fullmatch(code):
+            raise ValueError('Enter a USSD code using digits, * and #')
+        command += ' ' + code
     if action == 'dial':
         number = message.get('number', '')
         digits = number[1:] if isinstance(number, str) and number.startswith('+') else number
@@ -57,6 +65,22 @@ def validate_command(message):
             raise ValueError('Enter a telephone number')
         command += ' ' + number
     return command.encode('ascii')
+
+
+def validate_ussd(report):
+    """Per-SIM USSD state from the phone; [] when its helper predates USSD."""
+    ussd = report.get('ussd', [])
+    if not isinstance(ussd, list) or len(ussd) not in (0, 2):
+        raise ValueError('Invalid USSD state')
+    for slot, entry in enumerate(ussd, 1):
+        if entry is not None and not (
+                isinstance(entry, dict) and entry.get('slot') == slot and
+                type(entry.get('id')) is int and entry.get('state') in USSD_STATES and
+                type(entry.get('type')) is int and type(entry.get('error')) is int and
+                isinstance(entry.get('message'), str)):
+            raise ValueError('Invalid USSD state')
+    return [entry and {k: entry[k] for k in ('slot', 'id', 'state', 'type', 'error', 'message')}
+            for entry in ussd]
 
 
 class Relay:
@@ -118,7 +142,8 @@ class Relay:
                     if not isinstance(report, dict) or not isinstance(report.get('slots'), list) or len(report['slots']) != 2:
                         raise ValueError('Invalid phone state')
                     self.state = {'phone_connected': True, 'slots': report['slots'],
-                                  'media': report.get('media', 'idle'), 'audio_error': report.get('audio_error', '')}
+                                  'media': report.get('media', 'idle'), 'audio_error': report.get('audio_error', ''),
+                                  'ussd': validate_ussd(report)}
                     self.last_state = time.monotonic()
                     # The phone stops its PCM streams if this acknowledgement stops
                     # arriving, even when TCP hasn't noticed a network outage yet.

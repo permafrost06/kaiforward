@@ -89,7 +89,7 @@ int main(int argc, char **argv) {
             const char *slot = argv[++i];
             call_slot = !strcmp(slot, "1") ? 1 : !strcmp(slot, "2") ? 2 : -1;
             call_action = argv[++i];
-            if (!strcmp(call_action, "dial") && i + 1 < argc)
+            if ((!strcmp(call_action, "dial") || !strcmp(call_action, "ussd")) && i + 1 < argc)
                 call_number = argv[++i];
         } else if (!strcmp(argv[i], "--send") && i + 3 < argc) {
             const char *slot = argv[++i];

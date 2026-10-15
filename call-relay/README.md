@@ -1,7 +1,7 @@
 # KaiForward call relay
 
 A small server that lets a browser answer, hang up and place calls on the
-phone, with two-way call audio. Convex receives SMS but cannot hold the
+phone, with two-way call audio, and run USSD codes such as balance checks. Convex receives SMS but cannot hold the
 phone's long-lived audio connection. Run this server on a machine that the
 phone can reach over Tailscale.
 
@@ -83,6 +83,42 @@ use the audio at a time. If the browser cannot open a microphone, the call
 still goes ahead listen-only: the caller hears silence and the status line
 shows why the microphone failed.
 
+## USSD
+
+USSD needs both the updated SMS service and call helper on the phone:
+
+```sh
+python3 -m firmware.scripts.build_call_relay
+python3 -m scripts.update_native --build --relay-runtime dist/native-call-relay
+```
+
+Enter a code such as `*123#` and press **USSD SIM 1** or **USSD SIM 2**. The
+page shows the network's answer under the buttons. When the network asks for
+a reply ("reply needed", as with a menu), enter the choice, such as `1`, and
+press the same SIM's button. **Cancel USSD** ends a waiting or open session.
+Codes may contain only digits, `*`, `#` and `+`, up to 40 characters.
+
+Each SIM holds one exchange at a time. A new code can't be sent while the
+network has not answered the last one; after 60 seconds without an answer the
+exchange is marked failed. A code is sent once, like a call operation, and is
+never retried. USSD also works during a call on the same SIM, but not while
+the other SIM has a call.
+
+The phone keeps only the latest USSD text per SIM in memory. It is not stored,
+uploaded to Convex, or written to the phone's radio log. From a root shell on
+the phone, the same operations are available without the server:
+
+```sh
+kaiforward-native --call 1 ussd '*123#'
+kaiforward-native --call 1 ussd-read
+kaiforward-native --call 1 ussd-cancel
+```
+
+`ussd-read` prints `state` (`idle`, `waiting`, `reply`, `done`, `failed`,
+`cancelled`), the network's `message`, its RIL USSD `type` (`-1` if none),
+`error` (a modem error, `-1` lost modem connection, `-2` no answer), and an
+`id` that changes with every update.
+
 ## systemd
 
 ```ini
@@ -112,9 +148,11 @@ length, then a 1-byte type, then the payload. The types are:
 - `HELLO` `{"protocol":1,"token":…}`
 - `STATE`
 - `DOWNLINK` and `UPLINK`: 320-byte, 8 kHz, 16-bit mono PCM
-- `COMMAND` and `RESULT`
+- `COMMAND` and `RESULT`: call commands, and `ussd <code>` and
+  `ussd-cancel`. `STATE` carries a `ussd` array with each SIM's latest
+  exchange, or `null` for a SIM when the phone's SMS service predates USSD.
 - `START` and `STOP`
 - `PING`
 
-`tests/test_call_relay.py` covers authentication, framing, command certainty
-and audio ownership.
+`tests/test_call_relay.py` covers authentication, framing, command certainty,
+audio ownership and USSD validation.

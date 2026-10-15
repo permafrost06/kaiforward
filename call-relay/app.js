@@ -1,9 +1,10 @@
 'use strict';
 const el = id => document.getElementById(id);
+const ussdLabels = {waiting:'waiting for the network', reply:'reply needed', done:'done', failed:'failed', cancelled:'cancelled'};
 const labels = {'-2':'checking', '-1':'no call', 0:'connected', 1:'on hold', 2:'calling', 3:'ringing', 4:'incoming call', 5:'call waiting'};
 let socket, context, stream, node;
 let state = {phone_connected:false, slots:[]};
-let busy = false, seenActive = false, audioSlot = 0, micError = '';
+let busy = false, ussdPending = false, seenActive = false, audioSlot = 0, micError = '';
 
 function send(message) {
   if (socket?.readyState !== WebSocket.OPEN) throw new Error('Server connection is offline');
@@ -11,6 +12,20 @@ function send(message) {
 }
 
 const sim = slot => state.slots.find(s => s.slot === slot) || {};
+const ussd = slot => state.ussd?.[slot - 1] || {};
+const ussdOpen = slot => ['waiting', 'reply'].includes(ussd(slot).state);
+
+function ussdText(slot) {
+  const u = ussd(slot);
+  if (!u.state || u.state === 'idle') return '';
+  const reason = u.state !== 'failed' ? ''
+    : u.type === 4 ? ': not supported by the network'
+    : u.type === 5 ? ': the network timed out'
+    : u.error === -2 ? ': no answer from the network'
+    : u.error === -1 ? ': the phone lost its modem connection'
+    : u.error > 0 ? `: modem error ${u.error}` : '';
+  return `SIM ${slot} USSD ${ussdLabels[u.state] ?? u.state}${reason}` + (u.message ? `\n${u.message}` : '');
+}
 // Only one SIM can have a call at a time.
 const callSlot = () => [1, 2].find(slot => sim(slot).calls === 1) || 0;
 
@@ -23,6 +38,9 @@ function render() {
   el('answer').disabled = busy || !online || call.state !== 4;
   el('hangup').disabled = busy || !online || !slot;
   for (const s of [1, 2]) el('dial' + s).disabled = busy || !online || Boolean(slot) || !sim(s).registered || sim(s).state !== -1;
+  for (const s of [1, 2]) el('ussd' + s).disabled = busy || !online || !sim(s).registered || ussd(s).state === 'waiting';
+  el('ussdcancel').disabled = busy || !online || ![1, 2].some(ussdOpen);
+  el('ussd').textContent = [1, 2].map(ussdText).filter(Boolean).join('\n\n');
   el('audio').textContent = context ? 'Audio off' : 'Audio on';
   el('audio').disabled = !context && (!online || !slot);
   if (state.audio_error) el('notice').textContent = state.audio_error;
@@ -78,6 +96,15 @@ async function command(action, slot) {
   } catch (error) { busy = false; el('notice').textContent = error.message; stopAudio(); }
 }
 
+function ussdCommand(action, slot) {
+  try {
+    busy = true; render();
+    send({type:'command', action, slot, code:el('code').value.trim()});
+    ussdPending = true;
+    el('notice').textContent = 'Waiting for the phone';
+  } catch (error) { busy = false; el('notice').textContent = error.message; render(); }
+}
+
 function connect() {
   socket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/call`);
   socket.binaryType = 'arraybuffer';
@@ -86,19 +113,23 @@ function connect() {
     const message = JSON.parse(data);
     if (message.type === 'state') state = message;
     if (message.type === 'result') {
-      busy = false;
-      el('notice').textContent = message.ok ? 'Done' : (message.error || (message.uncertain ? 'Result unknown; check the call state before retrying' : `Phone refused (${message.result})`));
-      if (!message.ok && !message.uncertain) stopAudio();
+      const wasUssd = ussdPending;
+      busy = ussdPending = false;
+      el('notice').textContent = message.ok ? (wasUssd ? '' : 'Done') : (message.error || (message.uncertain ? 'Result unknown; check the call state before retrying' : `Phone refused (${message.result})`));
+      if (!message.ok && !message.uncertain && !wasUssd) stopAudio();
     }
     render();
   };
-  socket.onclose = () => { state = {phone_connected:false, slots:[]}; busy = false; stopAudio(); setTimeout(connect, 2000); };
+  socket.onclose = () => { state = {phone_connected:false, slots:[]}; busy = ussdPending = false; stopAudio(); setTimeout(connect, 2000); };
 }
 
 el('answer').onclick = () => command('answer', callSlot());
 el('hangup').onclick = () => command('hangup', callSlot());
 el('dial1').onclick = () => command('dial', 1);
 el('dial2').onclick = () => command('dial', 2);
+el('ussd1').onclick = () => ussdCommand('ussd', 1);
+el('ussd2').onclick = () => ussdCommand('ussd', 2);
+el('ussdcancel').onclick = () => ussdCommand('ussd-cancel', [1, 2].find(ussdOpen));
 el('audio').onclick = async () => {
   try { context ? stopAudio() : await startAudio(callSlot()); } catch (error) { el('notice').textContent = error.message; }
 };

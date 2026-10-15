@@ -110,8 +110,8 @@ The old key stops working once the service restarts.
 
 ## Call relay server
 
-Browser call control runs on a separate server reachable over Tailscale, not
-on Convex. On that server, with the phone on root ADB, prepare its private
+Browser call control and USSD codes run on a separate server reachable over
+Tailscale, not on Convex. On that server, with the phone on root ADB, prepare its private
 token and certificate and point the phone at it:
 
 ```sh
