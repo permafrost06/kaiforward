@@ -119,9 +119,8 @@ fun SmsViewer(model: MessagesViewModel = viewModel()) {
             if (searching) SearchField(search, onChange = { search = it }) else Column {
                 Text(if (settings) "Connection" else if (thread != null) state.names[thread.key] ?: searchState.names[thread.key] ?: thread.number.ifBlank { "Unknown sender" } else "Messages",
                     maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
-                if (!settings && state.connected) {
-                    Text(if (thread != null) thread.number else
-                        (state.refreshedAt?.let { updatedLabel(it) } ?: "Updating…"),
+                if (!settings && state.connected && thread != null) {
+                    Text(thread.number,
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1,
                         overflow = TextOverflow.Ellipsis)
