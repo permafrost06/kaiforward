@@ -14,6 +14,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
@@ -26,11 +28,11 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
@@ -132,7 +134,6 @@ fun SmsViewer(model: MessagesViewModel = viewModel()) {
         }, actions = {
             if (state.connected && !settings && !searching) {
                 if (selected == null) IconButton(onClick = { searchOpen = true }) { Icon(Icons.Default.Search, "Search messages") }
-                IconButton(onClick = { if (selected != null) model.refreshThread() else model.refresh() }, enabled = if (selected != null) !remoteThread.busy else !state.busy) { Icon(Icons.Default.Refresh, "Refresh messages") }
                 IconButton(onClick = { settings = true; model.clearError() }) { Icon(Icons.Default.Settings, "Connection settings") }
             }
         })
@@ -154,7 +155,12 @@ fun SmsViewer(model: MessagesViewModel = viewModel()) {
                 settings || !state.connected -> ConnectionScreen(state,
                     onConnect = model::connect, onDisconnect = { model.disconnect(); settings = false; selected = null; selectedNumber = null; selectedMessage = null; search = ""; searchOpen = false },
                     onContacts = { permission.launch(Manifest.permission.READ_CONTACTS) })
-                thread != null -> key(thread.key) { ConversationScreen(thread, threadViewer, model::moreThreadMessages, selectedMessage) }
+                thread != null -> key(thread.key) {
+                    PullToRefreshBox(isRefreshing = remoteThread.busy,
+                        onRefresh = { if (!remoteThread.busy) model.refreshThread() }, modifier = Modifier.weight(1f)) {
+                        ConversationScreen(thread, threadViewer, model::moreThreadMessages, selectedMessage)
+                    }
+                }
                 searching -> SearchScreen(search, threads, state, searchState, model::moreSearchResults,
                     onOpen = { message ->
                         keyboard?.hide()
@@ -162,27 +168,30 @@ fun SmsViewer(model: MessagesViewModel = viewModel()) {
                         selectedMessage = message.key
                         selected = conversationKey(message.peer)
                     }, onOpenContact = { keyboard?.hide(); selectedNumber = it.number; selectedMessage = null; selected = it.key })
-                else -> {
-                    if (!state.contactsAllowed) {
-                        TextButton(onClick = { permission.launch(Manifest.permission.READ_CONTACTS) },
-                            modifier = Modifier.padding(horizontal = 12.dp)) { Text("Use contacts") }
-                    }
-                    if (threads.isEmpty()) {
-                        Box(Modifier.weight(1f).fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text("No messages yet", style = MaterialTheme.typography.titleLarge)
-                                Spacer(Modifier.height(8.dp))
-                                Text("Messages will appear here once your KaiForward phone uploads them. Tap refresh to check again.", style = MaterialTheme.typography.bodyMedium)
-                            }
+                else -> PullToRefreshBox(isRefreshing = state.busy,
+                    onRefresh = { if (!state.busy) model.refresh() }, modifier = Modifier.weight(1f)) {
+                    Column(Modifier.fillMaxSize()) {
+                        if (!state.contactsAllowed) {
+                            TextButton(onClick = { permission.launch(Manifest.permission.READ_CONTACTS) },
+                                modifier = Modifier.padding(horizontal = 12.dp)) { Text("Use contacts") }
                         }
-                        HistoryFooter(state, onLoad = model::loadOlder, inbox = true)
-                    } else {
-                        val listState = rememberLazyListState()
-                        LazyColumn(Modifier.weight(1f), state = listState, contentPadding = PaddingValues(top = 12.dp, bottom = 20.dp)) {
-                            items(threads, key = { "conversation:${it.key}" }) { conversation ->
-                                ConversationRow(conversation, state.names[conversation.key]) { selectedNumber = conversation.number; selectedMessage = null; selected = conversation.key }
+                        if (threads.isEmpty()) {
+                            Box(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(32.dp), contentAlignment = Alignment.Center) {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Text("No messages yet", style = MaterialTheme.typography.titleLarge)
+                                    Spacer(Modifier.height(8.dp))
+                                    Text("Messages will appear here once your KaiForward phone uploads them. Pull down to refresh and check again.", style = MaterialTheme.typography.bodyMedium)
+                                }
                             }
-                            item(key = "history") { HistoryFooter(state, listState, model::loadOlder, inbox = true) }
+                            HistoryFooter(state, onLoad = model::loadOlder, inbox = true)
+                        } else {
+                            val listState = rememberLazyListState()
+                            LazyColumn(Modifier.weight(1f), state = listState, contentPadding = PaddingValues(top = 12.dp, bottom = 20.dp)) {
+                                items(threads, key = { "conversation:${it.key}" }) { conversation ->
+                                    ConversationRow(conversation, state.names[conversation.key]) { selectedNumber = conversation.number; selectedMessage = null; selected = conversation.key }
+                                }
+                                item(key = "history") { HistoryFooter(state, listState, model::loadOlder, inbox = true) }
+                            }
                         }
                     }
                 }

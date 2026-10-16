@@ -111,9 +111,10 @@ automatically. Threads show **No older messages** when history is exhausted.
 In search, exhausted results show **No more results**; errors offer **Retry
 search**, which retries only the failed page.
 A failed page pauses automatic loading and offers **Retry older
-messages**. In a thread, **Refresh** starts a fresh thread history from the
-newest page. In the inbox, **Refresh** restarts the conversation list and its pagination
-from the newest page. The viewer does not poll in the background.
+messages**. Pull down at the top of a conversation to refresh its history from
+the newest page. In the inbox, pull down to restart the conversation list and its
+pagination from the newest page, including when the inbox is empty. The viewer
+does not poll in the background.
 
 Connection settings let you disconnect and clear the saved credential. Messages
 are held in memory only and fetched again after a process restart. The token is
