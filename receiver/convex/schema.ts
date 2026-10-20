@@ -36,5 +36,6 @@ export default defineSchema({
     .index("by_key", ["key"])
     .index("by_timestamp", ["timestamp"])
     .index("by_conversation_timestamp", ["conversation", "timestamp"])
+    .index("by_conversation_arrival", ["conversation", "direction", "receivedAt"])
     .searchIndex("search_messages", { searchField: "searchText" }),
 });

@@ -107,3 +107,26 @@ it("limits preview size while retaining complete thread bodies and requires read
   expect(full.messages[0].body).toBe(message.body);
   expect(full.messages[0]).not.toHaveProperty("conversationId");
 });
+
+it("exposes arrival metadata even behind a sent preview or older uploaded backlog", async () => {
+  const t = convexTest(schema, modules);
+  const old = sms(1, "Bank", 5000);
+  const sent = { ...sms(2, "My SIM", 6000), direction: "sent" as const, recipient: "Bank" };
+  await t.mutation(internal.messages.ingest, { messages: [old, sent] });
+  const first = await (await t.fetch(url(), request())).json();
+  expect(first.syncedAt).toEqual(expect.any(Number));
+  expect(first.conversations[0].lastMessage.direction).toBe("sent");
+  const firstArrival = first.conversations[0].lastIncomingAt;
+  expect(firstArrival).toBeLessThanOrEqual(first.syncedAt);
+  await t.run(async ctx => {
+    await ctx.db.insert("messages", { ...sms(3, "Bank", 1), conversation: "bank", receivedAt: firstArrival + 100 });
+  });
+  const next = await (await t.fetch(url(), request())).json();
+  expect(next.conversations[0].lastMessage.key).toBe(sent.key);
+  expect(next.conversations[0].lastIncomingAt).toBe(firstArrival + 100);
+  const history = await t.query(internal.messages.thread, { conversation: "bank", paginationOpts: { cursor: null, numItems: 25 } });
+  expect(history.syncedAt).toEqual(expect.any(Number));
+  const beforeReplay = await t.run(async ctx => (await ctx.db.query("messages").withIndex("by_key", q => q.eq("key", old.key)).unique())?.receivedAt);
+  await t.mutation(internal.messages.ingest, { messages: [old] });
+  expect(await t.run(async ctx => (await ctx.db.query("messages").withIndex("by_key", q => q.eq("key", old.key)).unique())?.receivedAt)).toBe(beforeReplay);
+});

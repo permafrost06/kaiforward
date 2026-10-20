@@ -39,8 +39,13 @@ export const conversations = internalQuery({
   args: { paginationOpts: paginationOptsValidator },
   handler: async (ctx, { paginationOpts }) => {
     const page = await ctx.db.query("conversations").withIndex("by_latest").order("desc").paginate(paginationOpts);
-    return { conversations: page.page.map(({ key, number, lastMessage }) => ({ key, number, lastMessage })),
-      cursor: page.isDone ? null : page.continueCursor };
+    // Arrival time (rather than the SMS timestamp) also catches newly uploaded backlog.
+    const conversations = await Promise.all(page.page.map(async ({ key, number, lastMessage }) => {
+      const incoming = await ctx.db.query("messages").withIndex("by_conversation_arrival",
+        q => q.eq("conversation", key).eq("direction", "received")).order("desc").first();
+      return { key, number, lastMessage, lastIncomingAt: incoming?.receivedAt ?? null };
+    }));
+    return { conversations, syncedAt: Date.now(), cursor: page.isDone ? null : page.continueCursor };
   },
 });
 
@@ -82,6 +87,7 @@ export const thread = internalQuery({
       .order("desc").paginate(paginationOpts);
     return {
       messages: result.page.map(({ _id, _creationTime, searchText, conversation, conversationId, ...message }) => message),
+      syncedAt: Date.now(),
       cursor: result.isDone ? null : result.continueCursor,
     };
   },

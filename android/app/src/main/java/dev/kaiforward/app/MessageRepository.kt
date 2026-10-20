@@ -11,8 +11,8 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 
-data class MessagePage(val messages: List<Sms>, val cursor: String?)
-data class ConversationPage(val conversations: List<Conversation>, val cursor: String?)
+data class MessagePage(val messages: List<Sms>, val cursor: String?, val syncedAt: Long? = null)
+data class ConversationPage(val conversations: List<Conversation>, val cursor: String?, val syncedAt: Long? = null)
 
 class MessageRepository(private val context: Context) {
     suspend fun page(connection: Connection, cursor: String?): MessagePage {
@@ -32,19 +32,23 @@ class MessageRepository(private val context: Context) {
         val items = json.getJSONArray("conversations")
         return ConversationPage((0 until items.length()).map { index ->
             val item = items.getJSONObject(index)
-            Conversation(item.getString("key"), item.getString("number"), listOf(sms(item.getJSONObject("lastMessage"))))
-        }, if (json.isNull("cursor")) null else json.getString("cursor"))
+            Conversation(item.getString("key"), item.getString("number"), listOf(sms(item.getJSONObject("lastMessage"))),
+                if (item.isNull("lastIncomingAt")) null else item.getLong("lastIncomingAt"))
+        }, if (json.isNull("cursor")) null else json.getString("cursor"),
+            if (json.has("syncedAt")) json.getLong("syncedAt") else null)
     }
 
     private fun sms(item: JSONObject) = Sms(item.getString("key"), item.getLong("timestamp"), item.getString("sender"),
         item.getString("recipient"), item.getString("direction"), item.getString("body"),
-        if (item.has("simSlot") && !item.isNull("simSlot")) item.getInt("simSlot") else null)
+        if (item.has("simSlot") && !item.isNull("simSlot")) item.getInt("simSlot") else null,
+        if (item.has("receivedAt")) item.getLong("receivedAt") else item.getLong("timestamp"))
 
     private suspend fun request(connection: Connection, path: String, body: String? = null): MessagePage {
         val json = requestJson(connection, path, body)
         val items = json.getJSONArray("messages")
         return MessagePage((0 until items.length()).map { sms(items.getJSONObject(it)) },
-            if (json.isNull("cursor")) null else json.getString("cursor"))
+            if (json.isNull("cursor")) null else json.getString("cursor"),
+            if (json.has("syncedAt")) json.getLong("syncedAt") else null)
     }
 
     private suspend fun requestJson(connection: Connection, path: String, body: String? = null): JSONObject = withContext(Dispatchers.IO) {

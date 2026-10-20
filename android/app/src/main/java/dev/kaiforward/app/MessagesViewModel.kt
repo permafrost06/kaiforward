@@ -20,10 +20,13 @@ data class ViewerState(
     val cursor: String? = null,
     val error: String? = null,
     val refreshedAt: Long? = null,
+    val readStatus: MessageReadStatus = MessageReadStatus(),
 )
 
 class MessagesViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = MessageRepository(application)
+    private val readStore = MessageReadStore(application)
+    private var viewerActive = false
     private val relayPrefs = application.getSharedPreferences("sms-phone", android.content.Context.MODE_PRIVATE)
     private val sending = SmsSending(viewModelScope, onSent = { refresh(); thread.refresh() },
         onTrack = { id, slot -> check(relayPrefs.edit().putString("request", id).putInt("slot", slot).commit()) },
@@ -32,7 +35,7 @@ class MessagesViewModel(application: Application) : AndroidViewModel(application
     val sendingState = sending.state
     private val connection = validateConnection(BuildConfig.RECEIVER_URL, BuildConfig.APP_TOKEN)
     private var contactsJob: Job? = null
-    private val mutable = MutableStateFlow(ViewerState(connected = true, contactsAllowed = repository.hasContactsPermission()))
+    private val mutable = MutableStateFlow(ViewerState(connected = true, contactsAllowed = repository.hasContactsPermission(), readStatus = readStore.load()))
     val state = mutable.asStateFlow()
     private val search = MessageSearch(viewModelScope,
         fetch = { query, cursor -> repository.search(connection, query, cursor) },
@@ -40,7 +43,9 @@ class MessagesViewModel(application: Application) : AndroidViewModel(application
     val searchState = search.state
     private val thread = MessageThread(viewModelScope,
         fetch = { key, cursor -> repository.thread(connection, key, cursor) },
-        errorText = ::errorText)
+        errorText = ::errorText, onOpened = { key, syncedAt ->
+            updateReadStatus { if (viewerActive) it.opened(key, syncedAt) else it.initialize(syncedAt) }
+        })
     val threadState = thread.state
     fun openThread(key: String?, selectedMessage: String?) = thread.open(key, selectedMessage)
     fun moreThreadMessages() = thread.moreOrRetry()
@@ -56,7 +61,22 @@ class MessagesViewModel(application: Application) : AndroidViewModel(application
         reconnectSending()
     }
     fun reconnectSending() = sending.connect(BuildConfig.SMS_URL, BuildConfig.APP_TOKEN)
-    fun setSendingActive(active: Boolean) = sending.setActive(active)
+    fun setSendingActive(active: Boolean) {
+        sending.setActive(active)
+        viewerActive = active
+        val current = thread.state.value
+        if (active && current.conversation != null && current.syncedAt != null) {
+            updateReadStatus { it.opened(current.conversation, current.syncedAt) }
+        }
+    }
+    private fun updateReadStatus(change: (MessageReadStatus) -> MessageReadStatus) {
+        val previous = mutable.value.readStatus
+        val updated = change(previous)
+        if (updated != previous) {
+            readStore.save(updated)
+            mutable.update { it.copy(readStatus = updated) }
+        }
+    }
     fun sendSms(number: String, text: String, slot: Int) = sending.send(number, text, slot)
     override fun onCleared() { sending.close(); super.onCleared() }
 
@@ -72,6 +92,8 @@ class MessagesViewModel(application: Application) : AndroidViewModel(application
             mutable.update { it.copy(busy = true, error = null) }
             try {
                 val page = repository.conversations(current, if (older) mutable.value.cursor else null)
+                val syncedAt = checkNotNull(page.syncedAt) { "Deploy the updated receiver to enable local read status." }
+                updateReadStatus { it.initialize(syncedAt) }
                 mutable.update {
                     // Refresh restarts both the conversation list and its pagination chain.
                     it.copy(conversations = if (older) mergeConversations(it.conversations, page.conversations) else page.conversations, cursor = page.cursor,

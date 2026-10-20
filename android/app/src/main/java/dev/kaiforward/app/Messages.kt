@@ -8,6 +8,7 @@ data class Sms(
     val direction: String,
     val body: String,
     val simSlot: Int?,
+    val receivedAt: Long = timestamp,
 ) {
     val peer: String get() = if (direction == "sent") recipient else sender
 }
@@ -20,7 +21,7 @@ fun conversationKey(number: String): String {
     return trimmed.filter { it.isDigit() || it == '+' }.ifEmpty { trimmed }
 }
 
-data class Conversation(val key: String, val number: String, val messages: List<Sms>) {
+data class Conversation(val key: String, val number: String, val messages: List<Sms>, val lastIncomingAt: Long? = null) {
     val latest: Sms get() = messages.last()
 }
 

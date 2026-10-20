@@ -30,6 +30,10 @@ class DeviceSmokeRunner : Instrumentation() {
             checkPagination(thread = true)
             return
         }
+        if (options.containsKey("seed_unread_top") || options.getString("verify_read_status") == "true") {
+            ReadStatusDeviceChecks.run(this, options)
+            return
+        }
         val result = Bundle()
         val endpoint = options.getString("receiver_url")
         val token = options.getString("read_token")

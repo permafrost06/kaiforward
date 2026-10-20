@@ -30,8 +30,8 @@ android {
         applicationId = "dev.kaiforward.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 9
-        versionName = "0.5.0"
+        versionCode = 10
+        versionName = "0.6.0"
         buildConfigField("boolean", "PUSH_CONFIGURED", pushConfigured.toString())
         buildConfigField("String", "RECEIVER_URL", quoted("https://peaceful-cuttlefish-556.convex.site"))
         buildConfigField("String", "SMS_URL", quoted("https://nokia8110.tailcf48c.ts.net"))

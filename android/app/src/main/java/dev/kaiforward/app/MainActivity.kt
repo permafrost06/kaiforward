@@ -43,6 +43,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.ImeAction
@@ -246,7 +248,7 @@ fun SmsViewer(model: MessagesViewModel = viewModel(), initialConversation: Strin
                             LazyColumn(Modifier.weight(1f), state = inboxListState,
                                 contentPadding = PaddingValues(top = 12.dp, bottom = if (state.connected) 96.dp else 20.dp)) {
                                 items(threads, key = { "conversation:${it.key}" }) { conversation ->
-                                    ConversationRow(conversation, state.names[conversation.key]) { selectedNumber = conversation.number; selectedMessage = null; selected = conversation.key }
+                                    ConversationRow(conversation, state.names[conversation.key], state.readStatus.isUnread(conversation)) { selectedNumber = conversation.number; selectedMessage = null; selected = conversation.key }
                                 }
                                 item(key = "history") { HistoryFooter(state, inboxListState, model::loadOlder, inbox = true) }
                             }
@@ -339,11 +341,11 @@ internal fun SearchScreen(query: String, threads: List<Conversation>, state: Vie
                 Text("Matching contacts", Modifier.padding(horizontal = 20.dp, vertical = 12.dp), style = MaterialTheme.typography.labelLarge)
             }
             items(contacts, key = { "contact:${it.key}" }) { conversation ->
-                ConversationRow(conversation, state.names[conversation.key]) { onOpenContact(conversation) }
+                ConversationRow(conversation, state.names[conversation.key], state.readStatus.isUnread(conversation)) { onOpenContact(conversation) }
             }
             items(remote.messages, key = { "message:${it.key}" }) { message ->
                 val key = conversationKey(message.peer)
-                ConversationRow(Conversation(key, message.peer, listOf(message)), remote.names[key] ?: state.names[key]) { onOpen(message) }
+                ConversationRow(Conversation(key, message.peer, listOf(message)), remote.names[key] ?: state.names[key], state.readStatus.isUnread(message)) { onOpen(message) }
             }
             item(key = "history") {
                 HistoryFooter(ViewerState(busy = remote.busy, error = remote.error, cursor = remote.cursor,
@@ -389,22 +391,29 @@ private fun HistoryFooter(state: ViewerState, listState: LazyListState? = null, 
 }
 
 @Composable
-private fun ConversationRow(conversation: Conversation, name: String?, onClick: () -> Unit) {
+private fun ConversationRow(conversation: Conversation, name: String?, unread: Boolean = false, onClick: () -> Unit) {
     val title = name ?: conversation.number.ifBlank { "Unknown sender" }
-    Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 20.dp, vertical = 14.dp),
+    Row(Modifier.fillMaxWidth().semantics { stateDescription = if (unread) "Unread" else "Read" }
+        .clickable(onClick = onClick).padding(horizontal = 20.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(48.dp).background(MaterialTheme.colorScheme.secondaryContainer, CircleShape), contentAlignment = Alignment.Center) {
             Text(title.take(1).uppercase(), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSecondaryContainer)
         }
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
-            Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium)
+            Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium,
+                fontWeight = if (unread) FontWeight.Bold else FontWeight.Normal)
             Text((if (conversation.latest.direction == "sent") "You: " else "") + conversation.latest.body,
                 maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium,
+                fontWeight = if (unread) FontWeight.SemiBold else FontWeight.Normal,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(4.dp))
             Text(dateTime(conversation.latest.timestamp) + (conversation.latest.simSlot?.let { " · SIM $it" } ?: ""),
                 style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        if (unread) {
+            Spacer(Modifier.width(12.dp))
+            Box(Modifier.size(10.dp).background(MaterialTheme.colorScheme.primary, CircleShape))
         }
     }
 }

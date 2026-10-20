@@ -164,7 +164,7 @@ http.route({
     }
     try {
       const result = await ctx.runQuery(internal.messages.thread, { conversation, paginationOpts: { cursor, numItems: 25 } });
-      return respond(200, { messages: result.messages,
+      return respond(200, { messages: result.messages, syncedAt: result.syncedAt,
         cursor: result.cursor === null ? null : JSON.stringify({ conversation, cursor: result.cursor }) });
     } catch (error) {
       if (error instanceof Error && /cursor|not valid JSON|Unexpected token/i.test(error.message))

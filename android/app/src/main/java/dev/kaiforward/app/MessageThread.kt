@@ -15,6 +15,7 @@ data class ThreadState(
     val cursor: String? = null,
     val error: String? = null,
     val completed: Boolean = false,
+    val syncedAt: Long? = null,
 )
 
 /** A thread owns its history and cursor independently of the inbox and search. */
@@ -22,6 +23,7 @@ class MessageThread(
     private val scope: CoroutineScope,
     private val fetch: suspend (String, String?) -> MessagePage,
     private val errorText: (Exception) -> String = { "Unable to load this conversation. Please retry." },
+    private val onOpened: (String, Long) -> Unit = { _, _ -> },
 ) {
     private val mutable = MutableStateFlow(ThreadState())
     val state = mutable.asStateFlow()
@@ -60,16 +62,20 @@ class MessageThread(
             try {
                 var cursor = if (append) initial.cursor else null
                 var messages = if (append) initial.messages else emptyList()
+                var syncedAt = if (append) initial.syncedAt else null
                 do {
                     val page = fetch(conversation, cursor)
                     ensureActive()
                     if (version != generation) return@launch
                     check(page.cursor == null || page.cursor != cursor) { "The receiver did not advance the conversation cursor." }
+                    val newestPage = cursor == null
+                    if (newestPage) syncedAt = page.syncedAt
                     messages = (messages + page.messages).distinctBy(Sms::key)
                     cursor = page.cursor
                     // Search targets are reached through contiguous conversation pages.
                     val seeking = target != null && messages.none { it.key == target } && cursor != null
-                    mutable.value = ThreadState(conversation, messages, busy = seeking, cursor = cursor, completed = true)
+                    mutable.value = ThreadState(conversation, messages, busy = seeking, cursor = cursor, completed = true, syncedAt = syncedAt)
+                    if (newestPage && syncedAt != null) onOpened(conversation, syncedAt)
                 } while (seeking)
             } catch (error: CancellationException) {
                 throw error

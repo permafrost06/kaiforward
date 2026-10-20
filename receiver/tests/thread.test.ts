@@ -39,7 +39,7 @@ it("requires read auth and rejects malformed requests and cursors", async () => 
     expect((await t.fetch("/v1/messages/thread", request(value))).status).toBe(400);
   for (const cursor of ["", "invalid", JSON.stringify({ conversation: "other", cursor: "invalid" })])
     expect((await t.fetch("/v1/messages/thread", request("Other", cursor))).status).toBe(400);
-  expect(await (await t.fetch("/v1/messages/thread", request("missing"))).json()).toEqual({ messages: [], cursor: null });
+  expect(await (await t.fetch("/v1/messages/thread", request("missing"))).json()).toMatchObject({ messages: [], cursor: null, syncedAt: expect.any(Number) });
 });
 
 it("backfills existing messages and preserves sender IDs, country prefixes, and upload replays", async () => {

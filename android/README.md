@@ -184,7 +184,18 @@ the newest page. In the inbox, pull down to restart the conversation list and it
 pagination from the newest page, including when the inbox is empty. The viewer
 does not poll in the background.
 
-Messages are held in memory only and fetched again after a process restart.
+Read status is stored only on this Android device. The first successful sync
+marks all existing history as read, including conversations/pages loaded later.
+Incoming SMSes uploaded after that sync are unread until their conversation is
+opened successfully. Unread rows have bold text and a dot; opening from search
+or a notification also marks the conversation read. Sent SMSes are always read.
+There are no manual read/unread actions. Read status survives app updates and
+process restarts, and resets when app data is cleared or the app is uninstalled.
+The receiver supplies snapshot/arrival times (including an indexed latest
+incoming arrival per conversation); it stores no read status. Deploy the receiver
+update before installing this app version.
+
+Message contents are held in memory only and fetched again after a process restart.
 Previous editable connection preferences are cleared on startup; the app always
 uses its embedded configuration. App backup and cleartext network traffic are
 disabled. Contacts are queried locally with Android `PhoneLookup`;
@@ -275,3 +286,9 @@ for synthetic UI regression checks with no credentials: idle views must make
 zero requests, each history/retry tap must request exactly one page, failed
 pages must wait for retry, and an exhausted cursor must show the completion
 label. Each check restores the normal app screen afterward.
+
+For a device-only read-status demo, a test APK signed with the same certificate
+can run `-e seed_unread_top 3` to seed three recent incoming conversations as
+unread locally. `-e verify_read_status true` checks the visible unread rows,
+opens one, and verifies its read cutoff was saved. These are instrumentation
+options only; they add no controls or receiver mutations to the shipped app.
