@@ -10,11 +10,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 data class ViewerState(
     val connected: Boolean = false,
-    val endpoint: String = "",
     val conversations: List<Conversation> = emptyList(),
     val names: Map<String, String> = emptyMap(),
     val contactsAllowed: Boolean = false,
@@ -32,19 +30,16 @@ class MessagesViewModel(application: Application) : AndroidViewModel(application
         onForget = { relayPrefs.edit().remove("request").remove("slot").apply() },
         restoredRequest = relayPrefs.getString("request", null)?.let { it to relayPrefs.getInt("slot", 1) })
     val sendingState = sending.state
-    private val store = ConnectionStore(application)
-    private var connection = store.load()
-    private var loadJob: Job? = null
+    private val connection = validateConnection(BuildConfig.RECEIVER_URL, BuildConfig.APP_TOKEN)
     private var contactsJob: Job? = null
-    private val mutable = MutableStateFlow(ViewerState(connected = connection != null,
-        endpoint = connection?.endpoint.orEmpty(), contactsAllowed = repository.hasContactsPermission()))
+    private val mutable = MutableStateFlow(ViewerState(connected = true, contactsAllowed = repository.hasContactsPermission()))
     val state = mutable.asStateFlow()
     private val search = MessageSearch(viewModelScope,
-        fetch = { query, cursor -> repository.search(connection ?: error("Connect to the receiver first."), query, cursor) },
+        fetch = { query, cursor -> repository.search(connection, query, cursor) },
         names = repository::names, errorText = ::errorText)
     val searchState = search.state
     private val thread = MessageThread(viewModelScope,
-        fetch = { key, cursor -> repository.thread(connection ?: error("Connect to the receiver first."), key, cursor) },
+        fetch = { key, cursor -> repository.thread(connection, key, cursor) },
         errorText = ::errorText)
     val threadState = thread.state
     fun openThread(key: String?, selectedMessage: String?) = thread.open(key, selectedMessage)
@@ -54,43 +49,16 @@ class MessagesViewModel(application: Application) : AndroidViewModel(application
     fun search(query: String) = search.query(query)
     fun moreSearchResults() = search.moreOrRetry()
     init {
-        if (connection != null) {
-            refresh()
-            relayPrefs.getString("endpoint", null)?.let { sending.connect(it, connection!!.token) }
-        }
+        // Retire editable connection values from earlier versions, preserving SMS tracking.
+        application.getSharedPreferences("connection", android.content.Context.MODE_PRIVATE).edit().clear().apply()
+        relayPrefs.edit().remove("endpoint").apply()
+        refresh()
+        reconnectSending()
     }
-    fun configureSending(endpoint: String) {
-        val current = connection ?: return
-        val candidate = try { validateConnection(endpoint, current.token) } catch (_: Exception) {
-            mutable.update { it.copy(error = "Enter the Nokia’s HTTPS origin.") }; return
-        }
-        relayPrefs.edit().putString("endpoint", candidate.endpoint).apply()
-        sending.connect(candidate.endpoint, current.token)
-    }
+    fun reconnectSending() = sending.connect(BuildConfig.SMS_URL, BuildConfig.APP_TOKEN)
     fun setSendingActive(active: Boolean) = sending.setActive(active)
-    fun disconnectSending() { sending.disconnect(); relayPrefs.edit().clear().apply() }
     fun sendSms(number: String, text: String, slot: Int) = sending.send(number, text, slot)
     override fun onCleared() { sending.close(); super.onCleared() }
-
-    fun connect(endpoint: String, token: String) {
-        if (mutable.value.busy) return
-        val candidate = try { validateConnection(endpoint, token) } catch (_: Exception) {
-            mutable.update { it.copy(error = "Enter a valid HTTPS receiver origin and read token (without spaces).") }
-            return
-        }
-        loadJob = viewModelScope.launch {
-            mutable.update { it.copy(busy = true, error = null) }
-            try {
-                val page = repository.conversations(candidate, null)
-                withContext(Dispatchers.IO) { store.save(candidate) }
-                connection = candidate
-                mutable.value = ViewerState(true, candidate.endpoint, page.conversations,
-                    contactsAllowed = repository.hasContactsPermission(), cursor = page.cursor, refreshedAt = System.currentTimeMillis())
-                resolveContacts()
-            } catch (error: Exception) { failure(error) }
-            finally { mutable.update { it.copy(busy = false) } }
-        }
-    }
 
     fun refresh() = load(false)
     fun loadOlder() {
@@ -98,9 +66,9 @@ class MessagesViewModel(application: Application) : AndroidViewModel(application
         if (current.cursor != null || current.error != null) load(current.cursor != null)
     }
     private fun load(older: Boolean) {
-        val current = connection ?: return
+        val current = connection
         if (mutable.value.busy) return
-        loadJob = viewModelScope.launch {
+        viewModelScope.launch {
             mutable.update { it.copy(busy = true, error = null) }
             try {
                 val page = repository.conversations(current, if (older) mutable.value.cursor else null)
@@ -127,16 +95,6 @@ class MessagesViewModel(application: Application) : AndroidViewModel(application
                 mutable.update { it.copy(names = emptyMap()) }
             }
         }
-    }
-    fun disconnect() {
-        disconnectSending()
-        search.query("")
-        thread.open(null)
-        loadJob?.cancel()
-        contactsJob?.cancel()
-        store.clear()
-        connection = null
-        mutable.value = ViewerState(contactsAllowed = repository.hasContactsPermission())
     }
     fun clearError() { mutable.update { it.copy(error = null) } }
     private fun failure(error: Exception) {

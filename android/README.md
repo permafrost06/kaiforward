@@ -27,7 +27,18 @@ The app does not need the firmware's upload credential.
 Open this directory in Android Studio, use a JDK 17 or newer (tested with 21),
 and install Android SDK Platform 36. Android Studio can configure the local SDK
 path. From the command line, set `ANDROID_HOME` or put `sdk.dir=/path/to/Android/Sdk`
-in an untracked `local.properties`, then run:
+in an untracked `local.properties`.
+
+The APK embeds fixed receiver and Nokia HTTPS origins from `app/build.gradle.kts`
+and the shared app token from the ignored `data/android-viewer.env` file:
+
+```properties
+KAIFORWARD_READ_TOKEN=<the receiver read token and Nokia app_token>
+```
+
+This file is required for all builds. Its value becomes an APK constant; users
+cannot view or edit connection values in the app. To change a URL or token,
+rebuild and install the APK. Then run:
 
 ```sh
 cd android
@@ -59,25 +70,20 @@ disable debugging and enable code/resource shrinking. A copy with a descriptive
 name is placed in `dist/android/` when preparing a release for sharing.
 
 To use the shared APK, the recipient needs Android 8.0 or later, internet access,
-the receiver URL, and `KAIFORWARD_READ_TOKEN`. The existing production URL is
-prefilled in the app. Contact permission is optional and uses contacts on the
-recipient's Android phone. The read token grants access to all forwarded SMSes
-in the deployment; send it privately, separately from the APK. The local token
-copy is in the ignored `data/android-viewer.env` file. No signing credentials or
-receiver token are embedded in the APK.
+and access to the Nokia's Tailscale network for SMS sending. The APK includes the
+app token and both URLs, so share it only with people who should have message
+access. Signing credentials and the firmware upload token are not embedded.
+Contact permission is optional and uses contacts on the recipient's Android phone.
 
 The release certificate differs from the development debug certificate. To
-replace an existing debug installation, first uninstall it (this clears the
-app's local connection settings), install the release APK, then reconnect using
-the read token. This does not delete SMSes stored on the receiver.
+replace an existing debug installation, first uninstall it, then install the
+release APK. This does not delete SMSes stored on the receiver.
 
-## Connect and view
+## Open and view
 
-1. Open KaiForward and enter the receiver's HTTPS origin, for example
-   `https://your-deployment.convex.site`. Do not append `/v1/messages`.
-2. Enter `KAIFORWARD_READ_TOKEN` and tap **Connect and view messages**.
-3. Optionally allow Contacts to resolve numbers against this Android phone's
-   address book. Denying permission keeps the viewer usable with raw numbers.
+Open KaiForward to load conversations automatically using the embedded
+connection. Optionally allow Contacts to resolve numbers against this Android
+phone's address book. Denying permission keeps the viewer usable with raw numbers.
 
 Conversations are ordered by their latest loaded message. Incoming messages use
 the sender as the other party; outgoing messages use the recipient. Opening a
@@ -117,10 +123,10 @@ the newest page. In the inbox, pull down to restart the conversation list and it
 pagination from the newest page, including when the inbox is empty. The viewer
 does not poll in the background.
 
-Connection settings let you disconnect and clear the saved credential. Messages
-are held in memory only and fetched again after a process restart. The token is
-encrypted using an Android Keystore AES-GCM key. App backup and cleartext network
-traffic are disabled. Contacts are queried locally with Android `PhoneLookup`;
+Messages are held in memory only and fetched again after a process restart.
+Previous editable connection preferences are cleared on startup; the app always
+uses its embedded configuration. App backup and cleartext network traffic are
+disabled. Contacts are queried locally with Android `PhoneLookup`;
 the address book is never sent to the receiver. Search queries are sent over
 HTTPS in the request body. Names refresh when the app resumes.
 
@@ -131,12 +137,10 @@ same value as the Convex receiver's `KAIFORWARD_READ_TOKEN`. This uses the same
 app token for reading and sending; the Nokia's upload token stays separate.
 See [the direct SMS API setup](../firmware/README.md#direct-sms-api).
 
-Expose the Nokia's local HTTP service through Tailscale Serve on the Nokia.
-In **Connection → SMS sending**, enter the Nokia's HTTPS origin, for example
-`https://nokia8110.your-tailnet.ts.net`, and tap **Connect SMS**. Both phones
-need to be online in the tailnet. SMS needs no call relay server or connection.
-Previous relay-based SMS settings are deliberately not reused; enter the Nokia's
-URL after updating from 0.4.0.
+Expose the Nokia's local HTTP service through Tailscale Serve on the Nokia at
+the HTTPS origin embedded in the APK. SMS connects automatically at launch.
+Both phones need to be online in the tailnet. Use **Reconnect SMS** in the inbox
+or composer after a connection failure. SMS needs no call relay server.
 
 Tap **New SMS** in the inbox or **Reply** in a conversation. Enter a recipient,
 message, and SIM 1 or 2, then tap **Send SMS**. Recipients must have 3–20 digits
@@ -167,7 +171,7 @@ until a terminal status arrives. Checks pause in the background and resume when
 the app becomes active. Network failures pause checks until reconnect. An
 accepted submission clears the draft; a rejected or unknown submission keeps it.
 Draft text stays in memory and clears when the app process exits; tracking IDs
-persist until SMS is disabled or the receiver is disconnected. Carrier SMS
+persist until the tracked job is resolved or app data is cleared. Carrier SMS
 charges apply to the KaiForward phone.
 
 The app requests `INTERNET` and optional `READ_CONTACTS`; SMS goes through the
@@ -199,8 +203,7 @@ An opt-in live-device check is included in `src/androidTest`. Build it with
 `app/build/outputs/apk/androidTest/debug/`. Its instrumentation runner is
 `dev.kaiforward.app.test/dev.kaiforward.app.DeviceSmokeRunner`; it accepts
 `receiver_url` and `read_token` instrumentation arguments. The check reads two
-history pages, resolves available contact names, verifies encrypted credential
-storage, saves the connection, and launches the app. It reports counts without
+history pages, resolves available contact names, and launches the app. It reports counts without
 logging message contents, contact names, or credentials. Without both arguments
 it skips live access. Keep credential arguments out of shell history.
 

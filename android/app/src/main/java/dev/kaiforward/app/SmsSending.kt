@@ -44,7 +44,7 @@ data class SendingState(
     val online: Boolean = false,
     val readySlots: Set<Int> = emptySet(),
     val busy: Boolean = false,
-    val notice: String = "Configure SMS sending in Connection settings.",
+    val notice: String = "Connecting to your KaiForward phone…",
     val job: Long? = null,
     val slot: Int = 1,
     val accepted: Long = 0,
@@ -236,7 +236,7 @@ class SmsSending(
         is org.json.JSONException -> "The Nokia returned an invalid SMS response. Check its firmware and HTTPS URL."
         is java.io.IOException -> "Connection to the Nokia was interrupted. Check Tailscale and reconnect."
         is IllegalStateException -> error.message ?: "Invalid phone response."
-        is IllegalArgumentException -> "Invalid Nokia URL or app token. Check Connection settings."
+        is IllegalArgumentException -> "The built-in Nokia connection is invalid."
         else -> "Unable to connect to the Nokia. Check Tailscale and the HTTPS address."
     }
     private fun lost(reason: String) {

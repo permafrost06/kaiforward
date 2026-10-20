@@ -9,6 +9,17 @@ val releaseSigningFile = rootProject.file("../data/android-release/signing.prope
 val releaseSigning = Properties().apply {
     if (releaseSigningFile.isFile) releaseSigningFile.inputStream().use { load(it) }
 }
+// Embedded in the APK at build time; never editable through the app.
+val viewerCredentials = Properties().apply {
+    val source = rootProject.file("../data/android-viewer.env")
+    check(source.isFile) { "Missing embedded app credential: data/android-viewer.env" }
+    source.inputStream().use { load(it) }
+}
+val appToken = viewerCredentials.getProperty("KAIFORWARD_READ_TOKEN")
+check(!appToken.isNullOrBlank() && appToken.all { it.code in 33..126 }) {
+    "KAIFORWARD_READ_TOKEN must be a nonempty printable ASCII token without spaces"
+}
+fun quoted(value: String) = "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 android {
     namespace = "dev.kaiforward.app"
     compileSdk = 36
@@ -16,15 +27,18 @@ android {
         applicationId = "dev.kaiforward.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 7
-        versionName = "0.4.1"
+        versionCode = 8
+        versionName = "0.4.2"
+        buildConfigField("String", "RECEIVER_URL", quoted("https://peaceful-cuttlefish-556.convex.site"))
+        buildConfigField("String", "SMS_URL", quoted("https://nokia8110.tailcf48c.ts.net"))
+        buildConfigField("String", "APP_TOKEN", quoted(appToken))
         testInstrumentationRunner = "dev.kaiforward.app.DeviceSmokeRunner"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    buildFeatures { compose = true }
+    buildFeatures { compose = true; buildConfig = true }
     signingConfigs {
         if (releaseSigningFile.isFile) create("release") {
             storeFile = rootProject.file(releaseSigning.getProperty("storeFile"))

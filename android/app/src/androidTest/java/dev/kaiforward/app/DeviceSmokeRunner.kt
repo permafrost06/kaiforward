@@ -85,11 +85,7 @@ class DeviceSmokeRunner : Instrumentation() {
                         check(history.messages.none { a -> older.messages.any { b -> a.key == b.key } }) { "Thread pagination overlap" }
                     }
                 }
-                stage = "encrypted connection storage"
-                val store = ConnectionStore(targetContext)
-                store.save(connection)
-                check(store.load() == connection) { "Encrypted connection did not round-trip" }
-                result.putString("stream", "Live receiver OK: ${inbox.conversations.size} distinct conversations, ${first.messages.size} newest messages, $olderCount older messages, ${found.messages.size} indexed search results, $threadCount conversation-only messages, ${names.size} contact matches. Encrypted connection restored.\n")
+                result.putString("stream", "Live receiver OK: ${inbox.conversations.size} distinct conversations, ${first.messages.size} newest messages, $olderCount older messages, ${found.messages.size} indexed search results, $threadCount conversation-only messages, ${names.size} contact matches.\n")
             }
             stage = "activity launch"
             startActivitySync(Intent(targetContext, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))

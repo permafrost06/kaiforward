@@ -30,7 +30,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
@@ -45,7 +44,6 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -92,7 +90,6 @@ fun SmsViewer(model: MessagesViewModel = viewModel()) {
     var selected by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedNumber by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedMessage by rememberSaveable { mutableStateOf<String?>(null) }
-    var settings by rememberSaveable { mutableStateOf(false) }
     var searchOpen by rememberSaveable { mutableStateOf(false) }
     var search by rememberSaveable { mutableStateOf("") }
     var contactHelp by rememberSaveable { mutableStateOf(false) }
@@ -115,22 +112,21 @@ fun SmsViewer(model: MessagesViewModel = viewModel()) {
     LaunchedEffect(selected, selectedMessage, state.connected) {
         model.openThread(if (state.connected) selected else null, selectedMessage)
     }
-    val searching = searchOpen && selected == null && !settings && state.connected
+    val searching = searchOpen && selected == null && state.connected
     LaunchedEffect(searchOpen, search) { model.search(if (searchOpen) search else "") }
     fun goBack() {
         when {
-            settings -> settings = false
             selected != null -> { selected = null; selectedNumber = null; selectedMessage = null }
             else -> { keyboard?.hide(); searchOpen = false; search = "" }
         }
     }
-    BackHandler(settings || selected != null || searchOpen, onBack = ::goBack)
+    BackHandler(selected != null || searchOpen, onBack = ::goBack)
     Scaffold(topBar = {
         TopAppBar(title = {
             if (searching) SearchField(search, onChange = { search = it }) else Column {
-                Text(if (settings) "Connection" else if (thread != null) state.names[thread.key] ?: searchState.names[thread.key] ?: thread.number.ifBlank { "Unknown sender" } else "Messages",
+                Text(if (thread != null) state.names[thread.key] ?: searchState.names[thread.key] ?: thread.number.ifBlank { "Unknown sender" } else "Messages",
                     maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
-                if (!settings && state.connected && thread != null) {
+                if (state.connected && thread != null) {
                     Text(thread.number,
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1,
@@ -138,16 +134,15 @@ fun SmsViewer(model: MessagesViewModel = viewModel()) {
                 }
             }
         }, navigationIcon = {
-            if (settings || selected != null || searching) IconButton(onClick = ::goBack) {
+            if (selected != null || searching) IconButton(onClick = ::goBack) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
             }
         }, actions = {
-            if (state.connected && !settings && !searching) {
+            if (state.connected && !searching) {
                 TextButton(onClick = {
                     draftNumber = thread?.number.orEmpty(); composeOpen = true
                 }) { Text(if (selected == null) "New SMS" else "Reply") }
                 if (selected == null) IconButton(onClick = { searchOpen = true }) { Icon(Icons.Default.Search, "Search messages") }
-                IconButton(onClick = { settings = true; model.clearError() }) { Icon(Icons.Default.Settings, "Connection settings") }
             }
         })
     }) { padding ->
@@ -158,20 +153,22 @@ fun SmsViewer(model: MessagesViewModel = viewModel()) {
                     Column(Modifier.padding(16.dp)) {
                         Text(state.error!!, style = MaterialTheme.typography.bodyMedium)
                         Row {
-                            if (state.connected && !settings) TextButton(onClick = model::refresh, enabled = !state.busy) { Text("Retry refresh") }
+                            if (state.connected) TextButton(onClick = model::refresh, enabled = !state.busy) { Text("Retry refresh") }
                             TextButton(onClick = model::clearError) { Text("Dismiss") }
                         }
                     }
                 }
             }
-            if (state.connected && !settings && sending.endpoint.isNotEmpty()) {
-                Text(sending.notice, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                    style = MaterialTheme.typography.bodySmall)
+            if (state.connected && sending.endpoint.isNotEmpty()) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    Text(sending.notice, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                    if (!sending.online) TextButton(onClick = model::reconnectSending, enabled = !sending.busy) {
+                        Text("Reconnect SMS")
+                    }
+                }
             }
             when {
-                settings || !state.connected -> ConnectionScreen(state, sending, model::configureSending, model::disconnectSending,
-                    onConnect = model::connect, onDisconnect = { model.disconnect(); composeOpen = false; draftText = ""; settings = false; selected = null; selectedNumber = null; selectedMessage = null; search = ""; searchOpen = false },
-                    onContacts = { permission.launch(Manifest.permission.READ_CONTACTS) })
                 thread != null -> key(thread.key) {
                     PullToRefreshBox(isRefreshing = remoteThread.busy,
                         onRefresh = { if (!remoteThread.busy) model.refreshThread() }, modifier = Modifier.weight(1f)) {
@@ -234,7 +231,7 @@ fun SmsViewer(model: MessagesViewModel = viewModel()) {
                         modifier = Modifier.padding(end = 8.dp))
                 }
                 Text(sending.notice, style = MaterialTheme.typography.bodySmall)
-                if (!sending.online) TextButton(onClick = { composeOpen = false; settings = true }) { Text("SMS connection settings") }
+                if (!sending.online) TextButton(onClick = model::reconnectSending, enabled = !sending.busy) { Text("Reconnect SMS") }
             }
         },
         confirmButton = { Button(onClick = { submittedDraft = Triple(draftNumber, draftText, draftSlot); model.sendSms(draftNumber, draftText, draftSlot) },
@@ -398,70 +395,4 @@ internal fun ConversationScreen(thread: Conversation, state: ViewerState, loadOl
         }
         item(key = "history") { HistoryFooter(state, listState, loadOlder) }
     }
-}
-
-@Composable
-private fun ConnectionScreen(state: ViewerState, sending: SendingState, onConfigureSending: (String) -> Unit, onDisconnectSending: () -> Unit, onConnect: (String, String) -> Unit, onDisconnect: () -> Unit, onContacts: () -> Unit) {
-    var endpoint by rememberSaveable(state.endpoint) { mutableStateOf(state.endpoint.ifBlank { "https://peaceful-cuttlefish-556.convex.site" }) }
-    // Credentials intentionally do not enter saved instance state.
-    var token by remember { mutableStateOf("") }
-    var relayEndpoint by rememberSaveable(sending.endpoint) { mutableStateOf(sending.endpoint) }
-    var confirmDisconnect by remember { mutableStateOf(false) }
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
-        item {
-            Text(if (state.connected) "Your receiver" else "Your phone. Your messages.", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.height(12.dp))
-            Text("View SMSes forwarded from your KaiForward phone. Connect to the Convex receiver to read your conversations.",
-                style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        if (state.connected) {
-            item {
-                Text(state.endpoint, style = MaterialTheme.typography.bodyMedium)
-                Text("Message history connected", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-            }
-            item { OutlinedButton(onClick = { confirmDisconnect = true }, enabled = !state.busy) { Text("Disconnect receiver") } }
-        } else {
-            item { OutlinedTextField(endpoint, { endpoint = it }, label = { Text("Receiver URL") },
-                supportingText = { Text("Use the .convex.site origin, without /v1/messages") },
-                modifier = Modifier.fillMaxWidth(), singleLine = true, enabled = !state.busy,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri)) }
-            item { OutlinedTextField(token, { token = it }, label = { Text("App token") },
-                supportingText = { Text("The receiver’s KAIFORWARD_READ_TOKEN") },
-                visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth(), singleLine = true,
-                enabled = !state.busy, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password)) }
-            item { Button(onClick = { onConnect(endpoint, token) }, enabled = !state.busy && endpoint.isNotBlank() && token.isNotBlank(),
-                modifier = Modifier.fillMaxWidth()) { Text(if (state.busy) "Connecting…" else "Connect and view messages") } }
-        }
-        if (state.connected) item {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("SMS sending", style = MaterialTheme.typography.titleMedium)
-                Text("Connect directly to your Nokia over Tailscale using the same app token. SMS is sent from the KaiForward phone, with your carrier’s usual charges.",
-                    style = MaterialTheme.typography.bodyMedium)
-                OutlinedTextField(relayEndpoint, { relayEndpoint = it }, label = { Text("Nokia HTTPS URL") },
-                    placeholder = { Text("https://nokia8110.your-tailnet.ts.net") }, singleLine = true,
-                    modifier = Modifier.fillMaxWidth(), enabled = !sending.busy,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri))
-                Text(sending.notice, style = MaterialTheme.typography.bodySmall)
-                Row {
-                    Button(onClick = { onConfigureSending(relayEndpoint) }, enabled = !sending.busy && relayEndpoint.isNotBlank()) {
-                        Text(if (sending.endpoint.isEmpty()) "Connect SMS" else "Reconnect SMS")
-                    }
-                    if (sending.endpoint.isNotEmpty()) TextButton(onClick = onDisconnectSending, enabled = !sending.busy) { Text("Disable SMS") }
-                }
-            }
-        }
-        item { HorizontalDivider() }
-        item {
-            Text("Recognize your contacts", style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.height(8.dp))
-            Text("Allow contact access to show names beside phone numbers. Names are resolved on this device and are never uploaded.", style = MaterialTheme.typography.bodyMedium)
-            Spacer(Modifier.height(8.dp))
-            if (state.contactsAllowed) Text("Contact lookup enabled", color = MaterialTheme.colorScheme.primary)
-            else OutlinedButton(onClick = onContacts) { Text("Allow contact access") }
-        }
-    }
-    if (confirmDisconnect) AlertDialog(onDismissRequest = { confirmDisconnect = false }, title = { Text("Disconnect receiver?") },
-        text = { Text("This removes the saved connection and clears loaded messages from the app. Your messages remain on the receiver.") },
-        confirmButton = { TextButton(onClick = { confirmDisconnect = false; onDisconnect() }) { Text("Disconnect") } },
-        dismissButton = { TextButton(onClick = { confirmDisconnect = false }) { Text("Cancel") } })
 }

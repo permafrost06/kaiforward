@@ -5,49 +5,11 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.provider.ContactsContract
-import android.security.keystore.KeyGenParameterSpec
-import android.security.keystore.KeyProperties
-import android.util.Base64
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
-import java.security.KeyStore
-import javax.crypto.Cipher
-import javax.crypto.KeyGenerator
-import javax.crypto.SecretKey
-import javax.crypto.spec.GCMParameterSpec
-
-/** The credential never appears in URLs, logs, backups, or plaintext preferences. */
-class ConnectionStore(context: Context) {
-    private val prefs = context.getSharedPreferences("connection", Context.MODE_PRIVATE)
-    private fun key(): SecretKey {
-        val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-        (store.getKey("receiver-token", null) as? SecretKey)?.let { return it }
-        return KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore").run {
-            init(KeyGenParameterSpec.Builder("receiver-token", KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
-                .setBlockModes(KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE).build())
-            generateKey()
-        }
-    }
-    fun load(): Connection? = runCatching {
-        val endpoint = prefs.getString("endpoint", null) ?: return null
-        val encrypted = Base64.decode(prefs.getString("token", null) ?: return null, Base64.NO_WRAP)
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, encrypted.copyOfRange(0, 12)))
-        Connection(endpoint, String(cipher.doFinal(encrypted.copyOfRange(12, encrypted.size)), Charsets.UTF_8))
-    }.getOrNull()
-
-    fun save(connection: Connection) {
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.ENCRYPT_MODE, key())
-        val encrypted = cipher.iv + cipher.doFinal(connection.token.toByteArray(Charsets.UTF_8))
-        check(prefs.edit().putString("endpoint", connection.endpoint)
-            .putString("token", Base64.encodeToString(encrypted, Base64.NO_WRAP)).commit())
-    }
-    fun clear() { check(prefs.edit().clear().commit()) }
-}
 
 data class MessagePage(val messages: List<Sms>, val cursor: String?)
 data class ConversationPage(val conversations: List<Conversation>, val cursor: String?)
@@ -104,7 +66,7 @@ class MessageRepository(private val context: Context) {
             when (request.responseCode) {
                 200 -> Unit
                 400 -> error("Invalid request or history cursor. Refresh this view and try again.")
-                401, 403 -> error("Access denied. Check the receiver’s read token in Connection settings.")
+                401, 403 -> error("Access denied. The app credential must match the receiver’s read token.")
                 404 -> error("Message endpoint not found. Deploy the updated Convex receiver.")
                 503 -> error("Message viewing is not configured. Set KAIFORWARD_READ_TOKEN on the receiver.")
                 else -> error("Receiver returned HTTP ${request.responseCode}. Try again shortly.")
