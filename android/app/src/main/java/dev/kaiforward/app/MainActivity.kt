@@ -223,15 +223,6 @@ fun SmsViewer(model: MessagesViewModel = viewModel(), initialConversation: Strin
                     }
                 }
             }
-            if (state.connected && sending.endpoint.isNotEmpty()) {
-                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically) {
-                    Text(sending.notice, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
-                    if (!sending.online) TextButton(onClick = model::reconnectSending, enabled = !sending.busy) {
-                        Text("Reconnect SMS")
-                    }
-                }
-            }
             when {
                 thread != null -> key(thread.key) {
                     PullToRefreshBox(isRefreshing = remoteThread.busy,

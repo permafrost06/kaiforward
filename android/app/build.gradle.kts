@@ -37,8 +37,8 @@ android {
         applicationId = "dev.kaiforward.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 14
-        versionName = "0.7.2"
+        versionCode = 15
+        versionName = "0.7.3"
         buildConfigField("String", "UPDATE_URL", quoted(updateUrl))
         buildConfigField("boolean", "PUSH_CONFIGURED", pushConfigured.toString())
         buildConfigField("String", "RECEIVER_URL", quoted("https://peaceful-cuttlefish-556.convex.site"))
