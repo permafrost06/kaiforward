@@ -10,6 +10,9 @@ notifications with sender and SMS previews. See the [push setup](android/README.
 app token.
 See the [Android setup instructions](android/README.md) to build the APK and
 configure authenticated read access.
+Signed Android releases include an [in-app updater](android/README.md#in-app-updates)
+served from `https://kaiforward.permafrost06.com/updates/`, with authenticated
+downloads and a compatible endpoint at `permafrost06.com/kaiforward/updates/`.
 
 ## Build boot and system images
 

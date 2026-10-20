@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -30,6 +31,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
@@ -87,6 +89,13 @@ fun SmsViewer(model: MessagesViewModel = viewModel(), initialConversation: Strin
     val searchState by model.searchState.collectAsStateWithLifecycle()
     val threadState by model.threadState.collectAsStateWithLifecycle()
     val sending by model.sendingState.collectAsStateWithLifecycle()
+    val updates: AppUpdateViewModel = viewModel()
+    val updateState by updates.state.collectAsStateWithLifecycle()
+    var menuOpen by remember { mutableStateOf(false) }
+    val toastContext = LocalContext.current
+    LaunchedEffect(updates) {
+        updates.notices.collect { Toast.makeText(toastContext, it, Toast.LENGTH_SHORT).show() }
+    }
     var composeOpen by rememberSaveable { mutableStateOf(false) }
     var draftNumber by rememberSaveable { mutableStateOf("") }
     var draftText by remember { mutableStateOf("") }
@@ -121,11 +130,13 @@ fun SmsViewer(model: MessagesViewModel = viewModel(), initialConversation: Strin
             offerNotifications = false; pushPrefs.edit().putBoolean("permissionAsked", true).apply()
         }) { Text("Not now") } })
     val keyboard = LocalSoftwareKeyboardController.current
+    if (!offerNotifications) AppUpdateDialog(updateState, updates)
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { allowed ->
         model.resolveContacts()
         contactHelp = !allowed
     }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        updates.checkForUpdates()
         model.resolveContacts(); model.setSendingActive(true)
         if (BuildConfig.PUSH_CONFIGURED) { model.refresh(); model.refreshThread() }
     }
@@ -180,6 +191,14 @@ fun SmsViewer(model: MessagesViewModel = viewModel(), initialConversation: Strin
                     draftNumber = thread?.number.orEmpty(); composeOpen = true
                 }) { Text("Reply") }
                 if (selected == null) IconButton(onClick = { searchOpen = true }) { Icon(Icons.Default.Search, "Search messages") }
+            }
+            Box {
+                IconButton(onClick = { menuOpen = true }) { Icon(Icons.Default.MoreVert, "More options") }
+                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    DropdownMenuItem(text = { Text("Check for updates") }, onClick = {
+                        menuOpen = false; updates.checkForUpdates(manual = true)
+                    })
+                }
             }
         })
     }, floatingActionButton = {

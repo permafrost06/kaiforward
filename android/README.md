@@ -79,6 +79,142 @@ The release certificate differs from the development debug certificate. To
 replace an existing debug installation, first uninstall it, then install the
 release APK. This does not delete SMSes stored on the receiver.
 
+## In-app updates
+
+Version 0.7.0 adds a self updater. Install this signed release once using the
+existing APK installation procedure; older versions cannot check for updates.
+Afterwards, the app checks when it enters the foreground, at most once every
+six hours. **More options → Check for updates** checks immediately in the
+background without opening a dialog. If there is no newer version, a short
+**You’re up to date** toast appears. Manual check failures also use a toast;
+automatic check failures stay quiet.
+
+When a newer compatible release is found, the app downloads it automatically
+when its active internet connection uses Wi-Fi. On mobile data, it waits for
+Wi-Fi and starts without another tap when Wi-Fi becomes available. There are
+no checking, update-available, or download-progress dialogs. Downloads are bound
+to the selected Wi-Fi connection and stop if that connection is lost or changes;
+interrupted transfers restart on the next Wi-Fi connection or update check.
+The existing VPN connection is respected, including Wi-Fi-backed Tailscale.
+
+The app verifies the APK's size, SHA-256, package name, version, minimum Android
+version, and signing certificate. Only then does **Install KaiForward …?** appear,
+with **Install** and **Later** actions. Android may first ask you to allow
+KaiForward to install apps; returning from that setting continues installation
+if permission was granted. Android's own installation confirmation remains.
+The APK is verified again before opening the installer.
+
+Completed downloads and release metadata survive app restarts; an already
+verified download can be offered even while offline. **Later** dismisses the
+prompt for the current app session; a manual check can reopen it. Cancelling
+Android's installer keeps the downloaded update available for another attempt.
+Checks and downloads run asynchronously while the app's process is alive; there
+is no periodic background worker. If Android stops the process, opening the app
+resumes the flow. Message read status and other app data survive an update.
+Debug builds cannot install a release update because their signing certificates
+differ.
+
+The manifest URL is
+`https://kaiforward.permafrost06.com/updates/latest.json`. Version 0.7.0 uses
+`https://permafrost06.com/kaiforward/updates/latest.json`, which remains available
+with the same authenticated release files for compatibility. Both the manifest and
+APKs require HTTP Basic authentication: username `kaiforward`, password the
+embedded app token. The APK contains message access credentials, so keep these
+downloads authenticated. The Nginx password file lives outside the served
+directory. No update request sends credentials to arbitrary hosts: only HTTPS
+on `permafrost06.com` and `kaiforward.permafrost06.com` is allowed, including
+redirects. If the primary subdomain cannot be resolved, the app checks the
+legacy HTTPS endpoint instead, using the same authentication and verification.
+Installation always requires confirmation.
+
+### First-time hosting setup
+
+Build and verify the release, then prepare and privately stage its hosting files:
+
+```sh
+cd android
+./gradlew assembleRelease testReleaseUnitTest lintRelease
+cd ..
+python3 -m scripts.publish_android_update \
+  --base-url https://permafrost06.com/kaiforward/updates/ \
+  --notes 'Adds in-app updates.' --stage-host edges-studio@main-ubuntu-sg
+```
+
+This bootstraps the legacy path on the existing domain. Run the subdomain
+migration below afterwards. The publisher defaults to the subdomain for future
+releases.
+
+The publisher requires Android SDK build-tools, `keytool`, and `openssl`. It
+reads metadata from the actual APK, verifies its signature against the configured
+release key, and writes an ignored bundle to `dist/android-update/`. The staged
+bundle is in the deployment user's private `~/kaiforward-update-staging/`, outside
+the web root. To activate it, run this once with administrator access:
+
+```sh
+ssh -t edges-studio@main-ubuntu-sg sudo python3 kaiforward-update-staging/install-host.py
+```
+
+Review the staged `nginx-location.conf` and `install-host.py` first if desired.
+The installer serves files from `/srv/kaiforward-updates/public/`, installs a
+password file outside that public directory, and adds one include to the existing
+HTTPS site's `/etc/nginx/sites-available/permafrost06.com`. It backs up that site
+configuration, runs `nginx -t`, and reloads Nginx. A configuration failure restores
+the original file. The site's existing routes keep their configuration.
+
+Check that unauthenticated requests to the manifest **and the APK** return 401,
+then use the app's manual update check to verify authenticated access. Avoid
+putting the password in command-line arguments, URLs, shell history, or logs.
+
+### Publish subsequent versions
+
+Increase `versionCode` and `versionName` in `app/build.gradle.kts`, build with
+the same release signing key, and publish:
+
+```sh
+python3 -m scripts.publish_android_update \
+  --notes 'Describe what changed.' --deploy-host edges-studio@main-ubuntu-sg
+```
+
+The publisher uploads the APK to a temporary filename, checks its hash remotely,
+then publishes it before atomically replacing `latest.json`. A host-side lock
+serializes publication. Downgrades and different APKs reusing an existing
+`versionCode` are rejected. Earlier APKs remain available so a client that already
+fetched a manifest can finish downloading. Future releases need no Nginx reload.
+If you rotate the shared app token, coordinate updating the server password file
+with distributing an APK that has the new token; old credentials will stop working.
+
+### Subdomain hosting and legacy compatibility
+
+The updater's primary endpoint is now
+`https://kaiforward.permafrost06.com/updates/latest.json`. To migrate an
+initialized legacy host, add DNS for `kaiforward.permafrost06.com` pointing to
+the same server, stage the migration script, and run it once with sudo:
+
+```sh
+scp scripts/migrate_android_update_host.py \
+  edges-studio@main-ubuntu-sg:kaiforward-update-staging/migrate-subdomain.py
+ssh -t edges-studio@main-ubuntu-sg sudo python3 kaiforward-update-staging/migrate-subdomain.py
+```
+
+The migration obtains a Let's Encrypt certificate using the server's existing
+Certbot account and an HTTP webroot challenge. It adds a dedicated Nginx site
+with the same authenticated files at `/updates/`, preserves the challenge path
+for renewal, and installs a deploy hook to reload Nginx after certificate renewal.
+The old URL continues to serve the same authenticated files directly. This
+allows old installations to update even when their DNS resolver still caches a
+negative answer for the newly created subdomain. Certificate or configuration
+failures restore the old route and site configuration. Existing
+unmanaged subdomain configurations are preserved and require manual integration.
+
+Version 0.7.1 and later default directly to the subdomain. Keep the old domain's
+certificate and compatibility route working for version 0.7.0 installations.
+After DNS caches have cleared, the migration script can be rerun with
+`--redirect-legacy` to use permanent redirects instead, preserving manifest and
+APK filenames. Version 0.7.0 supports those redirects, but a stale negative DNS
+answer for the new hostname will prevent it from following them. Both endpoints use the same release files and credentials; no
+message data or receiver configuration changes. Subsequent releases still use
+`--deploy-host` without sudo.
+
 ## New message push notifications
 
 Use the **kaiforward** Firebase project and register an Android app with package

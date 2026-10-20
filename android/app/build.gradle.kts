@@ -1,4 +1,5 @@
 import java.util.Properties
+import java.net.URI
 
 plugins {
     id("com.android.application")
@@ -23,6 +24,12 @@ check(!appToken.isNullOrBlank() && appToken.all { it.code in 33..126 }) {
     "KAIFORWARD_READ_TOKEN must be a nonempty printable ASCII token without spaces"
 }
 fun quoted(value: String) = "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+val updateUrl = providers.gradleProperty("kaiforwardUpdateUrl")
+    .getOrElse("https://kaiforward.permafrost06.com/updates/latest.json")
+check(URI(updateUrl).let {
+    it.scheme == "https" && it.host in setOf("permafrost06.com", "kaiforward.permafrost06.com") &&
+        it.rawUserInfo == null && it.port == -1 && it.rawFragment == null && it.rawQuery == null
+}) { "Update URL must use HTTPS on a trusted KaiForward host" }
 android {
     namespace = "dev.kaiforward.app"
     compileSdk = 36
@@ -30,8 +37,9 @@ android {
         applicationId = "dev.kaiforward.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 11
-        versionName = "0.6.1"
+        versionCode = 14
+        versionName = "0.7.2"
+        buildConfigField("String", "UPDATE_URL", quoted(updateUrl))
         buildConfigField("boolean", "PUSH_CONFIGURED", pushConfigured.toString())
         buildConfigField("String", "RECEIVER_URL", quoted("https://peaceful-cuttlefish-556.convex.site"))
         buildConfigField("String", "SMS_URL", quoted("https://nokia8110.tailcf48c.ts.net"))
