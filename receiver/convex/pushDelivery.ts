@@ -40,7 +40,9 @@ export const send = internalAction({
     const characters = [...message.body];
     // Keep the entire data payload comfortably below FCM's 4096-byte limit.
     let limit = Math.min(700, characters.length);
-    const data = { sender: message.sender, body: "", conversation: message.conversation ?? message.sender, messageKey: message.key };
+    const data = { sender: message.sender, body: "", conversation: message.conversation ?? message.sender, messageKey: message.key,
+      ...(message.simSlot != null ? { simSlot: String(message.simSlot) } : {}),
+    };
     do {
       data.body = characters.slice(0, limit).join("") + (characters.length > limit ? "…" : "");
       if (Buffer.byteLength(JSON.stringify(data), "utf8") <= 3500) break;

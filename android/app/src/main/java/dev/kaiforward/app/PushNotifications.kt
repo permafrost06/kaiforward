@@ -113,11 +113,13 @@ class MessagePushService : FirebaseMessagingService() {
                 .setData(Uri.parse("kaiforward://conversation/" + Uri.encode(conversation)))
                 .putExtra("conversation", conversation).putExtra("sender", sender).putExtra("messageKey", messageKey),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val simSlot = message.data["simSlot"]?.toIntOrNull()?.takeIf { it in 1..2 }
         val notification = Notification.Builder(this, "messages")
             .setSmallIcon(R.drawable.ic_notification).setContentTitle(title)
             .setContentText(body).setStyle(Notification.BigTextStyle().bigText(body))
             .setCategory(Notification.CATEGORY_MESSAGE).setOnlyAlertOnce(false)
-            .setContentIntent(open).setAutoCancel(true).setVisibility(Notification.VISIBILITY_PRIVATE).build()
+            .setContentIntent(open).setAutoCancel(true).setVisibility(Notification.VISIBILITY_PRIVATE)
+            .apply { simSlot?.let { setSubText("SIM $it") } }.build()
         getSystemService(NotificationManager::class.java).notify(conversation, 0, notification)
         val recent = JSONArray()
         for (index in maxOf(0, seen.length() - 99) until seen.length()) recent.put(seen.getString(index))

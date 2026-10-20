@@ -63,17 +63,17 @@ describe("new-message push", () => {
     expect(devices.map(device => device.token).sort()).toEqual(["active", "new"]);
   });
 
-  async function setup() {
+  async function setup(simSlot?: 1 | 2) {
     const t = convexTest(schema, modules);
     await t.mutation(internal.push.register, { installation, token: "fcm-token", credential });
-    await t.mutation(internal.messages.ingest, { messages: [{ ...item, body: "😀".repeat(2000) }] });
+    await t.mutation(internal.messages.ingest, { messages: [{ ...item, ...(simSlot ? { simSlot } : {}), body: "😀".repeat(2000) }] });
     const device = (await t.run(ctx => ctx.db.query("pushDevices").collect()))[0];
     const message = (await t.run(ctx => ctx.db.query("messages").collect()))[0];
     return { t, args: { deviceId: device._id, messageId: message._id, attempt: 0 } };
   }
 
   it("sends bounded sender/text data and stops delivery after read-token rotation", async () => {
-    const { t, args } = await setup();
+    const { t, args } = await setup(2);
     const fetch = vi.fn(async (url: string, _init: RequestInit) =>
       url.includes("oauth2") ? Response.json({ access_token: "oauth", expires_in: 3600 }) : Response.json({ name: "accepted" }));
     vi.stubGlobal("fetch", fetch);
@@ -82,7 +82,8 @@ describe("new-message push", () => {
     expect(call).toBeDefined();
     const body = call![1].body as string;
     const payload = JSON.parse(body);
-    expect(payload.message.data).toMatchObject({ sender: item.sender, conversation: item.sender, messageKey: item.key });
+    expect(payload.message.data).toMatchObject({ sender: item.sender, conversation: item.sender,
+      messageKey: item.key, simSlot: "2" });
     expect(payload.message.data.body).toBe("😀".repeat(700) + "…");
     expect(new TextEncoder().encode(body).length).toBeLessThan(4096);
     expect(body).not.toContain("reader");
@@ -98,6 +99,16 @@ describe("new-message push", () => {
     const rotated = await setup();
     await rotated.t.action(internal.pushDelivery.send, rotated.args);
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it.each([1, undefined] as const)("preserves SIM %s without inventing an unknown slot", async simSlot => {
+    const { t, args } = await setup(simSlot);
+    const fetch = vi.fn(async (url: string, _init: RequestInit) =>
+      url.includes("oauth2") ? Response.json({ access_token: "oauth", expires_in: 3600 }) : Response.json({ name: "accepted" }));
+    vi.stubGlobal("fetch", fetch);
+    await t.action(internal.pushDelivery.send, args);
+    const payload = JSON.parse(fetch.mock.calls.find(([url]) => url.includes("fcm.googleapis.com"))![1].body as string);
+    expect(payload.message.data.simSlot).toBe(simSlot == null ? undefined : String(simSlot));
   });
 
   it("removes unregistered tokens and retries temporary failures", async () => {
