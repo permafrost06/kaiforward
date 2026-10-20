@@ -117,11 +117,12 @@ Newly stored incoming messages trigger a high-priority FCM data message. The app
 shows a forwarding-envelope icon, sender/contact name, SIM number (when known),
 and expandable SMS text; tapping opens the matching
 conversation and message. The preview is limited to 700 Unicode code points;
-the conversation contains the full message. Notifications for a conversation
-replace its previous alert. Sender and preview text pass through Firebase;
+the conversation contains the full message. Each message keeps its own
+notification, including multiple messages in the same conversation. Sender and
+preview text pass through Firebase;
 contacts remain local. Lock-screen previews follow Android's private-notification
-and user settings. **Mark as read** dismisses the alert and marks that conversation
-read locally through the alerted message without opening the app; later arrivals
+and user settings. **Mark as read** dismisses alerts and marks the conversation
+read locally through the selected message without opening the app; later arrivals
 remain unread. Deploy the updated receiver to include SIM and server arrival time
 in push payloads. Alerts from older receivers omit the quick action because they
 lack a safe read cutoff. There is no inline reply action.
@@ -297,3 +298,9 @@ can run `-e seed_unread_top 3` to seed three recent incoming conversations as
 unread locally. `-e verify_read_status true` checks the visible unread rows,
 opens one, and verifies its read cutoff was saved. These are instrumentation
 options only; they add no controls or receiver mutations to the shipped app.
+
+Run the instrumentation runner with `-e notifications true` (notification permission
+required) to check that same-sender and different-sender alerts coexist, tap and
+mark-read actions stay distinct, duplicate pushes are suppressed, and marking an
+older alert read preserves newer and unrelated alerts. This uses synthetic
+notifications and does not contact the receiver.

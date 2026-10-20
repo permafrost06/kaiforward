@@ -22,6 +22,10 @@ class DeviceSmokeRunner : Instrumentation() {
     }
 
     override fun onStart() {
+        if (options.getString("notifications") == "true") {
+            NotificationDeviceChecks.run(this)
+            return
+        }
         if (options.getString("search_pagination") == "true") {
             checkPagination(thread = false)
             return

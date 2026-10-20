@@ -13,6 +13,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.provider.ContactsContract
 import android.os.Build
+import android.os.Bundle
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingWorkPolicy
@@ -90,56 +91,62 @@ class PushRegistrationWorker(context: Context, params: WorkerParameters) : Corou
 class MessagePushService : FirebaseMessagingService() {
     override fun onNewToken(token: String) { PushRegistration.enqueue(this) }
 
-    override fun onMessageReceived(message: RemoteMessage) {
-        // Data messages use the same local notification path in foreground and background.
-        val sender = message.data["sender"] ?: return
-        val body = message.data["body"] ?: return
-        val conversation = message.data["conversation"] ?: return
-        val messageKey = message.data["messageKey"] ?: return
-        val prefs = getSharedPreferences("push", Context.MODE_PRIVATE)
-        val seen = JSONArray(prefs.getString("seenMessages", "[]"))
-        if ((0 until seen.length()).any { seen.optString(it) == messageKey }) return
-        var title = sender.ifBlank { "Unknown sender" }
-        if (checkSelfPermission(Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED) {
-            try {
-                val uri = Uri.withAppendedPath(ContactsContract.PhoneLookup.CONTENT_FILTER_URI, Uri.encode(sender))
-                contentResolver.query(uri, arrayOf(ContactsContract.PhoneLookup.DISPLAY_NAME), null, null, null)?.use {
-                    if (it.moveToFirst()) title = it.getString(0) ?: title
-                }
-            } catch (_: SecurityException) { /* Permission may have been revoked. */ }
-        }
-        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
-        val open = PendingIntent.getActivity(this, 0,
-            Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                .setData(Uri.parse("kaiforward://conversation/" + Uri.encode(conversation)))
-                .putExtra("conversation", conversation).putExtra("sender", sender).putExtra("messageKey", messageKey),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        val receivedAt = message.data["receivedAt"]?.toLongOrNull()?.takeIf { it >= 0 }
-        val simSlot = message.data["simSlot"]?.toIntOrNull()?.takeIf { it in 1..2 }
-        val notification = Notification.Builder(this, "messages")
-            .setSmallIcon(R.drawable.ic_notification).setContentTitle(title)
-            .setContentText(body).setStyle(Notification.BigTextStyle().bigText(body))
-            .setCategory(Notification.CATEGORY_MESSAGE).setOnlyAlertOnce(false)
-            .setContentIntent(open).setAutoCancel(true).setVisibility(Notification.VISIBILITY_PRIVATE)
-            .apply {
-                simSlot?.let { setSubText("SIM $it") }
-                // Older receivers lack a server cutoff, so cannot safely mark an alert read.
-                receivedAt?.let { cutoff ->
-                    val markRead = PendingIntent.getBroadcast(this@MessagePushService, 0,
-                        Intent(this@MessagePushService, MarkMessageReadReceiver::class.java)
-                            .setAction(MarkMessageReadReceiver.ACTION)
-                            .setData(Uri.parse("kaiforward://mark-read/" + Uri.encode(conversation)))
-                            .putExtra("conversation", conversation).putExtra("receivedAt", cutoff),
-                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-                    addAction(Notification.Action.Builder(null, "Mark as read", markRead).build())
-                }
-            }.build()
-        getSystemService(NotificationManager::class.java).notify(conversation, 0, notification)
-        val recent = JSONArray()
-        for (index in maxOf(0, seen.length() - 99) until seen.length()) recent.put(seen.getString(index))
-        recent.put(messageKey)
-        prefs.edit().putString("seenMessages", recent.toString()).apply()
+    override fun onMessageReceived(message: RemoteMessage) = showMessageNotification(message.data)
+}
+
+internal fun Context.showMessageNotification(data: Map<String, String>) {
+    // Data messages use the same local notification path in foreground and background.
+    val sender = data["sender"] ?: return
+    val body = data["body"] ?: return
+    val conversation = data["conversation"] ?: return
+    val messageKey = data["messageKey"] ?: return
+    val prefs = getSharedPreferences("push", Context.MODE_PRIVATE)
+    val seen = JSONArray(prefs.getString("seenMessages", "[]"))
+    if ((0 until seen.length()).any { seen.optString(it) == messageKey }) return
+    var title = sender.ifBlank { "Unknown sender" }
+    if (checkSelfPermission(Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED) {
+        try {
+            val uri = Uri.withAppendedPath(ContactsContract.PhoneLookup.CONTENT_FILTER_URI, Uri.encode(sender))
+            contentResolver.query(uri, arrayOf(ContactsContract.PhoneLookup.DISPLAY_NAME), null, null, null)?.use {
+                if (it.moveToFirst()) title = it.getString(0) ?: title
+            }
+        } catch (_: SecurityException) { /* Permission may have been revoked. */ }
     }
+    if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
+    val open = PendingIntent.getActivity(this, 0,
+        Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            .setData(Uri.parse("kaiforward://conversation/" + Uri.encode(conversation) + "/" + Uri.encode(messageKey)))
+            .putExtra("conversation", conversation).putExtra("sender", sender).putExtra("messageKey", messageKey),
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+    val receivedAt = data["receivedAt"]?.toLongOrNull()?.takeIf { it >= 0 }
+    val simSlot = data["simSlot"]?.toIntOrNull()?.takeIf { it in 1..2 }
+    val notification = Notification.Builder(this, "messages")
+        .setSmallIcon(R.drawable.ic_notification).setContentTitle(title)
+        .setContentText(body).setStyle(Notification.BigTextStyle().bigText(body))
+        .setCategory(Notification.CATEGORY_MESSAGE).setOnlyAlertOnce(false)
+        .addExtras(Bundle().apply {
+            putString("conversation", conversation)
+            receivedAt?.let { putLong("receivedAt", it) }
+        })
+        .setContentIntent(open).setAutoCancel(true).setVisibility(Notification.VISIBILITY_PRIVATE)
+        .apply {
+            simSlot?.let { setSubText("SIM $it") }
+            // Older receivers lack a server cutoff, so cannot safely mark an alert read.
+            receivedAt?.let { cutoff ->
+                val markRead = PendingIntent.getBroadcast(this@showMessageNotification, 0,
+                    Intent(this@showMessageNotification, MarkMessageReadReceiver::class.java)
+                        .setAction(MarkMessageReadReceiver.ACTION)
+                        .setData(Uri.parse("kaiforward://mark-read/" + Uri.encode(conversation) + "/" + Uri.encode(messageKey)))
+                        .putExtra("conversation", conversation).putExtra("receivedAt", cutoff),
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+                addAction(Notification.Action.Builder(null, "Mark as read", markRead).build())
+            }
+        }.build()
+    getSystemService(NotificationManager::class.java).notify("message:$messageKey", 0, notification)
+    val recent = JSONArray()
+    for (index in maxOf(0, seen.length() - 99) until seen.length()) recent.put(seen.getString(index))
+    recent.put(messageKey)
+    prefs.edit().putString("seenMessages", recent.toString()).apply()
 }
 
 /** Explicit, app-private action; no network or activity launch is needed. */
@@ -149,7 +156,16 @@ class MarkMessageReadReceiver : BroadcastReceiver() {
         val conversation = intent.getStringExtra("conversation")?.takeIf { it.isNotBlank() } ?: return
         val receivedAt = intent.getLongExtra("receivedAt", -1).takeIf { it >= 0 } ?: return
         MessageReadStore(context).update { it.opened(conversation, receivedAt) }
-        context.getSystemService(NotificationManager::class.java).cancel(conversation, 0)
+        val manager = context.getSystemService(NotificationManager::class.java)
+        for (active in manager.activeNotifications) {
+            val extras = active.notification.extras
+            if (extras.getString("conversation") == conversation && extras.containsKey("receivedAt") &&
+                extras.getLong("receivedAt") <= receivedAt) {
+                manager.cancel(active.tag, active.id)
+            }
+        }
+        // Remove a conversation alert left by an older app version.
+        manager.cancel(conversation, 0)
     }
 
     companion object {
