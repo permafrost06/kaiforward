@@ -40,7 +40,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.ImeAction
@@ -113,6 +115,14 @@ fun SmsViewer(model: MessagesViewModel = viewModel()) {
         model.openThread(if (state.connected) selected else null, selectedMessage)
     }
     val searching = searchOpen && selected == null && state.connected
+    val inboxListState = rememberLazyListState()
+    val collapseOffset = with(LocalDensity.current) { 24.dp.roundToPx() }
+    val newSmsExpanded by remember(collapseOffset) {
+        derivedStateOf {
+            inboxListState.firstVisibleItemIndex == 0 &&
+                inboxListState.firstVisibleItemScrollOffset <= collapseOffset
+        }
+    }
     LaunchedEffect(searchOpen, search) { model.search(if (searchOpen) search else "") }
     fun goBack() {
         when {
@@ -139,12 +149,20 @@ fun SmsViewer(model: MessagesViewModel = viewModel()) {
             }
         }, actions = {
             if (state.connected && !searching) {
-                TextButton(onClick = {
+                if (selected != null) TextButton(onClick = {
                     draftNumber = thread?.number.orEmpty(); composeOpen = true
-                }) { Text(if (selected == null) "New SMS" else "Reply") }
+                }) { Text("Reply") }
                 if (selected == null) IconButton(onClick = { searchOpen = true }) { Icon(Icons.Default.Search, "Search messages") }
             }
         })
+    }, floatingActionButton = {
+        if (state.connected && selected == null && !searching) {
+            ExtendedFloatingActionButton(
+                onClick = { draftNumber = ""; composeOpen = true },
+                expanded = newSmsExpanded,
+                icon = { Icon(painterResource(R.drawable.ic_chat), contentDescription = if (newSmsExpanded) null else "New SMS") },
+                text = { Text("New SMS") })
+        }
     }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
             if (if (selected != null) remoteThread.busy else state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -198,13 +216,14 @@ fun SmsViewer(model: MessagesViewModel = viewModel()) {
                                 }
                             }
                             HistoryFooter(state, onLoad = model::loadOlder, inbox = true)
+                            if (state.connected) Spacer(Modifier.height(96.dp))
                         } else {
-                            val listState = rememberLazyListState()
-                            LazyColumn(Modifier.weight(1f), state = listState, contentPadding = PaddingValues(top = 12.dp, bottom = 20.dp)) {
+                            LazyColumn(Modifier.weight(1f), state = inboxListState,
+                                contentPadding = PaddingValues(top = 12.dp, bottom = if (state.connected) 96.dp else 20.dp)) {
                                 items(threads, key = { "conversation:${it.key}" }) { conversation ->
                                     ConversationRow(conversation, state.names[conversation.key]) { selectedNumber = conversation.number; selectedMessage = null; selected = conversation.key }
                                 }
-                                item(key = "history") { HistoryFooter(state, listState, model::loadOlder, inbox = true) }
+                                item(key = "history") { HistoryFooter(state, inboxListState, model::loadOlder, inbox = true) }
                             }
                         }
                     }

@@ -142,7 +142,9 @@ the HTTPS origin embedded in the APK. SMS connects automatically at launch.
 Both phones need to be online in the tailnet. Use **Reconnect SMS** in the inbox
 or composer after a connection failure. SMS needs no call relay server.
 
-Tap **New SMS** in the inbox or **Reply** in a conversation. Enter a recipient,
+Tap the floating **New SMS** button at the bottom right of the inbox or **Reply** in a conversation.
+The floating button shrinks to its chat icon after scrolling down and expands again near the top.
+Enter a recipient,
 message, and SIM 1 or 2, then tap **Send SMS**. Recipients must have 3–20 digits
 with an optional leading `+`; spaces, parentheses, and hyphens are removed.
 The composer counts GSM septets or UTF-16 units and prevents messages exceeding
