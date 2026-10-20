@@ -15,7 +15,7 @@
 #define RESPONSE_LIMIT 10240
 
 typedef struct {
-    int fd, writing, read_only;
+    int fd, writing, read_only, sms_send;
     int64_t deadline;
     size_t used, length, sent;
     char input[HEADER_LIMIT + BODY_LIMIT + 1];
@@ -74,6 +74,8 @@ int settings_http_fds(struct pollfd *fds) {
 
 static void respond(Client *c, int status, const char *body) {
     const char *reason = status == 200   ? "OK"
+                         : status == 202 ? "Accepted"
+                         : status == 503 ? "Service Unavailable"
                          : status == 400 ? "Bad Request"
                          : status == 401 ? "Unauthorized"
                          : status == 404 ? "Not Found"
@@ -84,6 +86,7 @@ static void respond(Client *c, int status, const char *body) {
                                          : "Internal Server Error";
     const char *extra = status == 401   ? "WWW-Authenticate: Bearer\r\n"
                         : status != 405 ? ""
+                        : c->sms_send   ? "Allow: POST\r\n"
                         : c->read_only  ? "Allow: GET\r\n"
                                         : "Allow: GET, PATCH\r\n";
     if (!body)
@@ -115,12 +118,13 @@ static char *trim(char *s) {
     return s;
 }
 
-static int authorized(const char *value) {
-    if (strlen(value) != 71 || strncmp(value, "Bearer ", 7))
+static int authorized(const char *value, const char *key) {
+    size_t length = strlen(key);
+    if (!length || strlen(value) != length + 7 || strncmp(value, "Bearer ", 7))
         return 0;
     unsigned diff = 0;
-    for (int i = 0; i < 64; i++)
-        diff |= (unsigned char)value[i + 7] ^ (unsigned char)access_key[i];
+    for (size_t i = 0; i < length; i++)
+        diff |= (unsigned char)value[i + 7] ^ (unsigned char)key[i];
     return diff == 0;
 }
 
@@ -152,6 +156,16 @@ static void request(Client *c, const char *home, sqlite3 *db, const Radio radios
         respond(c, 400, NULL);
         return;
     }
+    int sms = !strncmp(path, "/v1/sms", 7);
+    Config config;
+    const char *key = access_key;
+    if (sms) {
+        if (config_load(home, &config) || !*config.app_token) {
+            respond(c, 503, "{\"error\":\"SMS app token is not configured\"}\n");
+            return;
+        }
+        key = config.app_token;
+    }
     size_t body_size = 0;
     int has_length = 0, auth = 0, has_auth = 0, json = 0, has_type = 0;
     char *line = line_end + 2;
@@ -174,7 +188,7 @@ static void request(Client *c, const char *home, sqlite3 *db, const Radio radios
                 respond(c, 400, NULL);
                 return;
             }
-            auth = authorized(value);
+            auth = authorized(value, key);
         } else if (!strcasecmp(line, "Content-Length")) {
             if (has_length++ || !*value) {
                 respond(c, 400, NULL);
@@ -208,16 +222,17 @@ static void request(Client *c, const char *home, sqlite3 *db, const Radio radios
         line = line_end + 2;
     }
     if (!auth) {
-        respond(c, 401, NULL);
+        respond(c, 401, sms ? "{\"error\":\"app token required\"}\n" : NULL);
         return;
     }
-    c->read_only = !strcmp(path, "/v1/status");
-    if (!c->read_only && strcmp(path, "/v1/settings")) {
+    c->sms_send = sms && !strcmp(path, "/v1/sms/send");
+    c->read_only = !strcmp(path, "/v1/status") || (sms && !c->sms_send);
+    if (!sms && !c->read_only && strcmp(path, "/v1/settings")) {
         respond(c, 404, NULL);
         return;
     }
-    int patch = !c->read_only && !strcmp(method, "PATCH");
-    if (!patch && strcmp(method, "GET")) {
+    int patch = sms ? c->sms_send && !strcmp(method, "POST") : !c->read_only && !strcmp(method, "PATCH");
+    if ((!patch && strcmp(method, "GET")) || (c->sms_send && !patch)) {
         respond(c, 405, NULL);
         return;
     }
@@ -236,6 +251,11 @@ static void request(Client *c, const char *home, sqlite3 *db, const Radio radios
         return;
     }
     char body[9600];
+    if (sms) {
+        int status = sms_http_request(db, method, path, c->input + header_size, body, sizeof(body));
+        respond(c, status, status == 200 || status == 202 ? body : "{\"error\":\"SMS request failed\"}\n");
+        return;
+    }
     if (c->read_only) {
         if (status_read(home, db, radios, body, sizeof(body)))
             respond(c, 500, "{\"error\":\"status unavailable\"}\n");

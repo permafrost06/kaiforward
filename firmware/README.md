@@ -145,7 +145,7 @@ adb shell /system/bin/kaiforward-native --settings-key
 ```
 
 `--settings-set` reads JSON from stdin. Supported fields are `ssid`, `password`,
-`url`, `token` and `relay_url`, all strings. Omitted fields retain their current values.
+`url`, `token`, `relay_url` and `app_token`, all strings. Omitted fields retain their current values.
 Configs written by earlier builds may contain a `device_id` line; it is ignored
 and dropped on the next save. Settings may be provisioned in stages: an empty SSID clears the saved network,
 an empty password selects an open network, an empty URL or token disables
@@ -164,7 +164,7 @@ HTTP clients use `Authorization: Bearer <settings-key>` for both
 `GET /v1/settings` and `PATCH /v1/settings`. Patches require
 `Content-Type: application/json` and a `Content-Length`; chunked bodies are
 unsupported. A successful response contains `ssid`, `url`, `relay_url`,
-`password_set`, and `token_set`, with no passwords, receiver tokens, or access
+`password_set`, `token_set`, and `app_token_set`, with no passwords, receiver tokens, or access
 keys. Invalid requests return 400, missing/wrong keys 401, unknown paths 404,
 unsupported methods 405, a busy settings writer 409, oversized requests 413,
 wrong content types 415, and storage failures 500. Responses disable caching.
@@ -420,3 +420,66 @@ when multiple phones are connected. For SSH over USB:
 adb forward tcp:2222 tcp:22
 ssh -p 2222 root@127.0.0.1
 ```
+
+## Direct SMS API
+
+The Nokia accepts authenticated SMS requests on the existing native HTTP
+listener (port 8768). Calls keep their outgoing TLS connection to `relay_url`;
+SMS requests do not depend on that connection.
+
+Set `app_token` using the settings API or `scripts.settings_native set` with a
+private JSON file containing `{"app_token":"<your app token>"}`. Use the same
+value as the receiver's `KAIFORWARD_READ_TOKEN`. Do not change the Nokia's upload
+`token`. Reads report only `app_token_set`; the token is not returned. Empty
+`app_token` disables direct SMS access. Changes take effect on the next request.
+Only the settings access key can change settings; the app token grants SMS
+access. The settings key and upload token do not authorize the SMS endpoints.
+
+Rebuild and update both the native runtime and call helper: both read the
+configuration format containing `app_token`.
+
+```sh
+python3 -m firmware.scripts.build_call_relay
+python3 -m scripts.update_native --build --relay-runtime dist/native-call-relay
+```
+
+After updating, enable Tailscale Serve **on the Nokia**:
+
+```sh
+adb shell /data/kaiforward/tailscale/tailscale --socket=/data/kaiforward/tailscale/tailscaled.sock serve status --json
+adb shell /data/kaiforward/tailscale/tailscale --socket=/data/kaiforward/tailscale/tailscaled.sock serve --bg 8768
+```
+
+Inspect existing Serve configuration before changing it; if HTTPS port 443
+already serves another app, use a separate port, such as `serve --bg
+--https=8443 8768`, and include `:8443` in the Android URL. Tailscale HTTPS
+certificates must be enabled for the tailnet. Serve terminates HTTPS on the
+Nokia and proxies to its own loopback listener. Enter the HTTPS origin printed
+by Serve in the Android app; no separate machine hosts this SMS endpoint.
+See [Tailscale Serve documentation](https://tailscale.com/docs/reference/tailscale-cli/serve).
+
+Every endpoint requires `Authorization: Bearer <app_token>` and disables caching:
+
+- `GET /v1/sms` verifies access and returns `{"slots":[1,2]}`. Both SIMs can queue
+  SMS even when not registered; transmission waits until the chosen SIM is ready.
+- `POST /v1/sms/send` accepts JSON with exactly `requestId` (a lowercase UUID),
+  `slot` (1 or 2), `number`, and `text`. It returns 202 with the outbox `job`,
+  `slot`, and `status`. It validates the same recipient and one-segment limits
+  as `--send`. Content-Type must be application/json with a Content-Length.
+- `GET /v1/sms/requests/<requestId>` returns the job, SIM and latest status,
+  without recipients or message contents. Unknown IDs return 404.
+
+Request IDs and queued jobs commit atomically to SQLite. Repeating a request
+with the same ID and payload returns the same job, including after a service
+restart. Reusing an ID with a different payload returns 409. Clients should
+save the ID before submitting and recover lost responses with GET. Do not
+create another ID automatically after a timeout. A queued job is not a delivery
+receipt; the existing radio path sends once and marks interrupted submissions
+uncertain. Invalid payloads return 400, invalid credentials 401, disabled SMS
+access 503, and storage failures 500. Existing settings/status access continues
+to require the settings key.
+
+While an SMS is queued, the radio worker refreshes stale registration state
+at most every 15 seconds. Once submitted, it waits up to three minutes for the
+modem result. A disconnect or expired result remains uncertain and is never
+automatically resent; the recipient may already have received it.

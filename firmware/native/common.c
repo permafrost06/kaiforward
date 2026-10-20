@@ -160,7 +160,7 @@ static int url_valid(const char *url, int relay) {
 }
 int config_valid(const Config *c) {
     if (!safe(c->ssid) || !safe(c->password) || !safe(c->url) || !safe(c->token) ||
-        !safe(c->relay_url))
+        !safe(c->relay_url) || !safe(c->app_token))
         return 0;
     if (strlen(c->ssid) > 32)
         return 0;
@@ -177,6 +177,9 @@ int config_valid(const Config *c) {
         return 0;
     if (strpbrk(c->url, " \"\\") || strpbrk(c->token, " \"\\") || strpbrk(c->relay_url, " \"\\"))
         return 0;
+    for (const unsigned char *p = (const unsigned char *)c->app_token; *p; p++)
+        if (*p <= 32 || *p >= 127)
+            return 0;
     return 1;
 }
 int relay_address(const char *url, char *host, size_t host_cap, char *port, size_t port_cap) {
@@ -232,7 +235,7 @@ int config_load(const char *home, Config *c) {
         cap = sizeof(c->n);                                                                        \
     }
         FIELD(ssid)
-        else FIELD(password) else FIELD(url) else FIELD(token) else FIELD(relay_url)
+        else FIELD(password) else FIELD(url) else FIELD(token) else FIELD(relay_url) else FIELD(app_token)
 #undef FIELD
             if (!dest || strlen(v) >= cap) {
             fclose(f);
@@ -249,8 +252,8 @@ int config_save(const char *home, const Config *c) {
         return -1;
     char path[1200], buf[2600];
     snprintf(path, sizeof(path), "%s/config", home);
-    snprintf(buf, sizeof(buf), "ssid=%s\npassword=%s\nurl=%s\ntoken=%s\nrelay_url=%s\n", c->ssid,
-             c->password, c->url, c->token, c->relay_url);
+    snprintf(buf, sizeof(buf), "ssid=%s\npassword=%s\nurl=%s\ntoken=%s\nrelay_url=%s\napp_token=%s\n", c->ssid,
+             c->password, c->url, c->token, c->relay_url, c->app_token);
     return atomic_write(path, buf);
 }
 int json_string(char *out, size_t cap, const char *s) {

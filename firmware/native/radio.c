@@ -195,6 +195,8 @@ static int request(Radio *r, int code, const unsigned char *args, size_t size) {
     }
     r->pending[index] = code;
     r->pending_at[index] = monotonic_ms();
+    if (code == 20)
+        r->registration_retry_at = r->pending_at[index] + 15000;
     trace(r, "request", code, 0);
     return token;
 }
@@ -296,11 +298,23 @@ static void sim_record(Radio *r, int index) {
     request(r, 28, a, n);
 }
 void radio_send_queued(Radio *r, sqlite3 *db) {
-    if (r->fd < 0 || r->radio != 10 || r->sim != 1 || r->registered != 1 || r->active_app != 5)
+    if (r->fd < 0 || r->radio != 10 || r->sim != 1 || r->active_app != 5)
         return;
     for (int i = 0; i < 256; i++)
-        if (r->pending_job[i])
+        if (r->pending_job[i] || r->pending[i] == 20)
             return;
+    int64_t now = monotonic_ms();
+    if (r->registered != 1 || now >= r->registration_retry_at) {
+        /* Modems can miss registration notifications while idle. Query again
+         * only when a job is waiting, and never submit against stale state. */
+        if (now < r->registration_retry_at)
+            return;
+        char where[64];
+        snprintf(where, sizeof(where), "slot=%d AND status='queued'", r->slot);
+        if (store_count(db, "outbox", where) > 0)
+            request(r, 20, NULL, 0);
+        return;
+    }
     char pdu[400];
     int64_t job = store_outgoing(db, r->slot, pdu, sizeof(pdu));
     if (job <= 0)
@@ -374,6 +388,8 @@ int radio_handle(Radio *r, sqlite3 *db, const unsigned char *data, size_t size) 
         int64_t job = r->pending_job[index];
         r->pending_job[index] = 0;
         r->pending[index] = 0;
+        if (request_code == 20)
+            r->registration_retry_at = monotonic_ms() + 15000;
         if (code == r->control_token) {
             call_reply(r, error);
             request(r, 9, NULL, 0);
@@ -527,11 +543,22 @@ void radio_tick(Radio *r, sqlite3 *db, const char *socket_dir) {
             radio_close(r);
             return;
         }
+        int sms_pending = 0;
         for (int i = 0; i < 256; i++)
-            if (r->pending[i] && now - r->pending_at[i] > 30000) {
+            if (r->pending[i] == 25 && r->pending_job[i])
+                sms_pending = 1;
+        for (int i = 0; i < 256; i++) {
+            /* A delivered SMS can take longer than 30 seconds to acknowledge.
+             * Keep its socket/token alive, including when the modem serializes
+             * unrelated queries behind it. Never retry the SMS on expiry. */
+            if (!r->pending[i] || (sms_pending && r->pending[i] != 25))
+                continue;
+            int64_t timeout = r->pending[i] == 25 ? 180000 : 30000;
+            if (now - r->pending_at[i] > timeout) {
                 radio_close(r);
                 return;
             }
+        }
         return;
     }
     if (now < r->retry_at)

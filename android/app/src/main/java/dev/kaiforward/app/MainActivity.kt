@@ -79,6 +79,16 @@ fun SmsViewer(model: MessagesViewModel = viewModel()) {
     val state by model.state.collectAsStateWithLifecycle()
     val searchState by model.searchState.collectAsStateWithLifecycle()
     val threadState by model.threadState.collectAsStateWithLifecycle()
+    val sending by model.sendingState.collectAsStateWithLifecycle()
+    var composeOpen by rememberSaveable { mutableStateOf(false) }
+    var draftNumber by rememberSaveable { mutableStateOf("") }
+    var draftText by remember { mutableStateOf("") }
+    var draftSlot by rememberSaveable { mutableIntStateOf(1) }
+    var submittedDraft by remember { mutableStateOf<Triple<String, String, Int>?>(null) }
+    LaunchedEffect(sending.accepted) {
+        if (sending.accepted > 0 && submittedDraft == Triple(draftNumber, draftText, draftSlot)) draftText = ""
+        submittedDraft = null
+    }
     var selected by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedNumber by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedMessage by rememberSaveable { mutableStateOf<String?>(null) }
@@ -92,7 +102,8 @@ fun SmsViewer(model: MessagesViewModel = viewModel()) {
         model.resolveContacts()
         contactHelp = !allowed
     }
-    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { model.resolveContacts() }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { model.resolveContacts(); model.setSendingActive(true) }
+    LifecycleEventEffect(Lifecycle.Event.ON_PAUSE) { model.setSendingActive(false) }
     val threads = state.conversations
     val inboxThread = threads.firstOrNull { it.key == selected }
     val remoteThread = if (threadState.conversation == selected) threadState else ThreadState(conversation = selected, busy = true)
@@ -132,6 +143,9 @@ fun SmsViewer(model: MessagesViewModel = viewModel()) {
             }
         }, actions = {
             if (state.connected && !settings && !searching) {
+                TextButton(onClick = {
+                    draftNumber = thread?.number.orEmpty(); composeOpen = true
+                }) { Text(if (selected == null) "New SMS" else "Reply") }
                 if (selected == null) IconButton(onClick = { searchOpen = true }) { Icon(Icons.Default.Search, "Search messages") }
                 IconButton(onClick = { settings = true; model.clearError() }) { Icon(Icons.Default.Settings, "Connection settings") }
             }
@@ -150,9 +164,13 @@ fun SmsViewer(model: MessagesViewModel = viewModel()) {
                     }
                 }
             }
+            if (state.connected && !settings && sending.endpoint.isNotEmpty()) {
+                Text(sending.notice, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                    style = MaterialTheme.typography.bodySmall)
+            }
             when {
-                settings || !state.connected -> ConnectionScreen(state,
-                    onConnect = model::connect, onDisconnect = { model.disconnect(); settings = false; selected = null; selectedNumber = null; selectedMessage = null; search = ""; searchOpen = false },
+                settings || !state.connected -> ConnectionScreen(state, sending, model::configureSending, model::disconnectSending,
+                    onConnect = model::connect, onDisconnect = { model.disconnect(); composeOpen = false; draftText = ""; settings = false; selected = null; selectedNumber = null; selectedMessage = null; search = ""; searchOpen = false },
                     onContacts = { permission.launch(Manifest.permission.READ_CONTACTS) })
                 thread != null -> key(thread.key) {
                     PullToRefreshBox(isRefreshing = remoteThread.busy,
@@ -197,6 +215,32 @@ fun SmsViewer(model: MessagesViewModel = viewModel()) {
             }
         }
     }
+    if (composeOpen && state.connected) AlertDialog(
+        onDismissRequest = { if (!sending.busy) composeOpen = false },
+        title = { Text("Send SMS") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Sent from your KaiForward phone’s SIM.", style = MaterialTheme.typography.bodyMedium)
+                OutlinedTextField(draftNumber, { draftNumber = it }, label = { Text("Recipient") }, singleLine = true,
+                    enabled = !sending.busy, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone))
+                OutlinedTextField(draftText, { draftText = it }, label = { Text("Message") }, minLines = 3, maxLines = 6,
+                    enabled = !sending.busy, supportingText = {
+                        val length = smsLength(draftText)
+                        Text("${length.used}/${length.limit} ${length.alphabet} · one SMS segment")
+                    }, isError = draftText.isNotEmpty() && !smsLength(draftText).valid)
+                Row {
+                    for (slot in 1..2) FilterChip(selected = draftSlot == slot,
+                        onClick = { draftSlot = slot }, label = { Text("SIM $slot") }, enabled = !sending.busy,
+                        modifier = Modifier.padding(end = 8.dp))
+                }
+                Text(sending.notice, style = MaterialTheme.typography.bodySmall)
+                if (!sending.online) TextButton(onClick = { composeOpen = false; settings = true }) { Text("SMS connection settings") }
+            }
+        },
+        confirmButton = { Button(onClick = { submittedDraft = Triple(draftNumber, draftText, draftSlot); model.sendSms(draftNumber, draftText, draftSlot) },
+            enabled = !sending.busy && sending.online && draftSlot in sending.readySlots &&
+                validSmsNumber(draftNumber) && smsLength(draftText).valid) { Text(if (sending.busy) "Sending…" else "Send SMS") } },
+        dismissButton = { TextButton(onClick = { composeOpen = false }, enabled = !sending.busy) { Text("Close") } })
     if (contactHelp) AlertDialog(onDismissRequest = { contactHelp = false },
         title = { Text("Contact names are optional") },
         text = { Text("You can keep viewing phone numbers. To enable names after denying permission, allow Contacts in Android app settings. Contact data stays on this device.") },
@@ -334,7 +378,7 @@ internal fun ConversationScreen(thread: Conversation, state: ViewerState, loadOl
     // Reverse layout opens at the newest message and preserves position when history arrives.
     LazyColumn(Modifier.fillMaxSize(), state = listState, reverseLayout = true,
         contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { Text("Viewing only · ${thread.messages.size} loaded messages", style = MaterialTheme.typography.labelSmall,
+        item { Text("${thread.messages.size} loaded messages", style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) }
         items(thread.messages.asReversed(), key = { it.key }) { message ->
             val sent = message.direction == "sent"
@@ -357,10 +401,11 @@ internal fun ConversationScreen(thread: Conversation, state: ViewerState, loadOl
 }
 
 @Composable
-private fun ConnectionScreen(state: ViewerState, onConnect: (String, String) -> Unit, onDisconnect: () -> Unit, onContacts: () -> Unit) {
+private fun ConnectionScreen(state: ViewerState, sending: SendingState, onConfigureSending: (String) -> Unit, onDisconnectSending: () -> Unit, onConnect: (String, String) -> Unit, onDisconnect: () -> Unit, onContacts: () -> Unit) {
     var endpoint by rememberSaveable(state.endpoint) { mutableStateOf(state.endpoint.ifBlank { "https://peaceful-cuttlefish-556.convex.site" }) }
     // Credentials intentionally do not enter saved instance state.
     var token by remember { mutableStateOf("") }
+    var relayEndpoint by rememberSaveable(sending.endpoint) { mutableStateOf(sending.endpoint) }
     var confirmDisconnect by remember { mutableStateOf(false) }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
         item {
@@ -372,7 +417,7 @@ private fun ConnectionScreen(state: ViewerState, onConnect: (String, String) -> 
         if (state.connected) {
             item {
                 Text(state.endpoint, style = MaterialTheme.typography.bodyMedium)
-                Text("Read-only connection", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                Text("Message history connected", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
             }
             item { OutlinedButton(onClick = { confirmDisconnect = true }, enabled = !state.busy) { Text("Disconnect receiver") } }
         } else {
@@ -380,12 +425,30 @@ private fun ConnectionScreen(state: ViewerState, onConnect: (String, String) -> 
                 supportingText = { Text("Use the .convex.site origin, without /v1/messages") },
                 modifier = Modifier.fillMaxWidth(), singleLine = true, enabled = !state.busy,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri)) }
-            item { OutlinedTextField(token, { token = it }, label = { Text("Read token") },
+            item { OutlinedTextField(token, { token = it }, label = { Text("App token") },
                 supportingText = { Text("The receiver’s KAIFORWARD_READ_TOKEN") },
                 visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth(), singleLine = true,
                 enabled = !state.busy, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password)) }
             item { Button(onClick = { onConnect(endpoint, token) }, enabled = !state.busy && endpoint.isNotBlank() && token.isNotBlank(),
                 modifier = Modifier.fillMaxWidth()) { Text(if (state.busy) "Connecting…" else "Connect and view messages") } }
+        }
+        if (state.connected) item {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("SMS sending", style = MaterialTheme.typography.titleMedium)
+                Text("Connect directly to your Nokia over Tailscale using the same app token. SMS is sent from the KaiForward phone, with your carrier’s usual charges.",
+                    style = MaterialTheme.typography.bodyMedium)
+                OutlinedTextField(relayEndpoint, { relayEndpoint = it }, label = { Text("Nokia HTTPS URL") },
+                    placeholder = { Text("https://nokia8110.your-tailnet.ts.net") }, singleLine = true,
+                    modifier = Modifier.fillMaxWidth(), enabled = !sending.busy,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri))
+                Text(sending.notice, style = MaterialTheme.typography.bodySmall)
+                Row {
+                    Button(onClick = { onConfigureSending(relayEndpoint) }, enabled = !sending.busy && relayEndpoint.isNotBlank()) {
+                        Text(if (sending.endpoint.isEmpty()) "Connect SMS" else "Reconnect SMS")
+                    }
+                    if (sending.endpoint.isNotEmpty()) TextButton(onClick = onDisconnectSending, enabled = !sending.busy) { Text("Disable SMS") }
+                }
+            }
         }
         item { HorizontalDivider() }
         item {

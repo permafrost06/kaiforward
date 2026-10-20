@@ -14,8 +14,8 @@ PROJECT = Path(__file__).resolve().parents[1]
 
 
 def encode_config(values):
-    fields = ['ssid', 'password', 'url', 'token', 'relay_url']
-    values = {'relay_url': '', **values}
+    fields = ['ssid', 'password', 'url', 'token', 'relay_url', 'app_token']
+    values = {'relay_url': '', 'app_token': '', **values}
     if set(values) != set(fields) or not all(isinstance(v, str) for v in values.values()):
         raise ValueError('Invalid settings fields')
     if any(any(ord(c) < 32 or ord(c) == 127 for c in v) for v in values.values()):
@@ -33,6 +33,8 @@ def encode_config(values):
     for name, limit in [('url', 1024), ('token', 256)]:
         if not 1 <= len(values[name].encode()) <= limit:
             raise ValueError(name + ' is empty or too long')
+    if len(values['app_token']) > 256 or any(ord(c) <= 32 or ord(c) >= 127 for c in values['app_token']):
+        raise ValueError('App token must contain at most 256 printable ASCII characters without spaces')
     relay_url = values['relay_url']
     if relay_url:
         relay = urlsplit(relay_url)
@@ -101,7 +103,7 @@ def main():
     url = args.receiver_url or input('Receiver URL [' + existing.get('url', '') + ']: ') or existing.get('url', '')
     token = receiver.get('token') or existing.get('token') or getpass.getpass('Receiver token: ')
     relay_url = existing.get('relay_url', '') if args.relay_url is None else args.relay_url
-    values = dict(ssid=ssid, password=password, url=url, token=token, relay_url=relay_url)
+    values = dict(ssid=ssid, password=password, url=url, token=token, relay_url=relay_url, app_token=existing.get('app_token', ''))
     write_private(args.output / 'config', encode_config(values))
     ca = args.ca
     if url.startswith('https://') and not ca and not (args.output / 'ca.pem').exists():

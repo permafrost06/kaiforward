@@ -26,9 +26,9 @@ int settings_read(const char *home, char *json, size_t cap) {
         return -1;
     int n = snprintf(json, cap,
                      "{\"ssid\":%s,\"url\":%s,\"relay_url\":%s,\"password_set\":%"
-                     "s,\"token_set\":%s}\n",
+                     "s,\"token_set\":%s,\"app_token_set\":%s}\n",
                      ssid, url, relay_url, *c.password ? "true" : "false",
-                     *c.token ? "true" : "false");
+                     *c.token ? "true" : "false", *c.app_token ? "true" : "false");
     return n < 0 || (size_t)n >= cap ? -1 : 0;
 }
 
@@ -80,7 +80,8 @@ int settings_update(sqlite3 *db, const char *home, const char *json) {
                       {"password", c.password, sizeof(c.password)},
                       {"url", c.url, sizeof(c.url)},
                       {"token", c.token, sizeof(c.token)},
-                      {"relay_url", c.relay_url, sizeof(c.relay_url)}};
+                      {"relay_url", c.relay_url, sizeof(c.relay_url)},
+                      {"app_token", c.app_token, sizeof(c.app_token)}};
         for (unsigned i = 0; i < sizeof(fields) / sizeof(fields[0]); i++)
             if (!strcmp(name, fields[i].name)) {
                 dest = fields[i].value;

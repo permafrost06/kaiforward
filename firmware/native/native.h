@@ -16,7 +16,7 @@ typedef struct {
     int signal, security; /* 0 open, 1 WPA PSK, 2 unsupported */
 } WifiNetwork;
 typedef struct {
-    char ssid[129], password[129], url[1025], token[257], relay_url[257];
+    char ssid[129], password[129], url[1025], token[257], relay_url[257], app_token[257];
 } Config;
 typedef struct {
     char sender[129], body[KF_TEXT];
@@ -31,7 +31,7 @@ typedef struct {
     size_t used;
     int pending[256];
     int64_t pending_job[256];
-    int64_t pending_at[256], last_rx, retry_at, partial_at;
+    int64_t pending_at[256], last_rx, retry_at, partial_at, registration_retry_at;
     int subscription_attempted;
     int app_type;
     char aid[129];
@@ -63,6 +63,7 @@ int settings_update(sqlite3 *db, const char *home, const char *json);
 int settings_key(const char *home, char key[65]);
 int settings_command(const char *home, int action);
 struct pollfd;
+int sms_http_request(sqlite3 *db, const char *method, const char *path, const char *body, char *json, size_t cap);
 int settings_http_open(const char *home, const char *address, int port);
 int settings_http_fds(struct pollfd *fds);
 void settings_http_tick(const char *home, sqlite3 *db, const Radio radios[2]);

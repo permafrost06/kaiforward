@@ -1,7 +1,7 @@
 # KaiForward for Android
 
-A native Kotlin / Jetpack Compose viewer for SMSes uploaded by the KaiForward
-phone to the existing Convex receiver. Requires Android 8.0 (API 26) or newer.
+A native Kotlin / Jetpack Compose app for reading forwarded SMS from Convex
+and sending SMS directly through the KaiForward phone. Requires Android 8.0 (API 26) or newer.
 
 ## Configure the receiver
 
@@ -19,7 +19,8 @@ For production use `npx convex deploy` and `npx convex env set --prod
 KAIFORWARD_READ_TOKEN '<random read token>'` instead. Keep the firmware's existing
 `KAIFORWARD_TOKEN` unchanged. The read token authorizes access to all messages in
 that deployment; it is a shared viewer credential, not a user account system.
-The app does not need the firmware's upload credential or call relay token.
+The same app token is used for receiver reads and SMS sending directly through the Nokia.
+The app does not need the firmware's upload credential.
 
 ## Build and install
 
@@ -123,8 +124,54 @@ traffic are disabled. Contacts are queried locally with Android `PhoneLookup`;
 the address book is never sent to the receiver. Search queries are sent over
 HTTPS in the request body. Names refresh when the app resumes.
 
-This first version only views forwarded SMSes. It requests `INTERNET` and
-optional `READ_CONTACTS`; it does not request local SMS, call, or USSD access.
+## Send SMS
+
+Update the Nokia's native runtime and set its `app_token` setting to the exact
+same value as the Convex receiver's `KAIFORWARD_READ_TOKEN`. This uses the same
+app token for reading and sending; the Nokia's upload token stays separate.
+See [the direct SMS API setup](../firmware/README.md#direct-sms-api).
+
+Expose the Nokia's local HTTP service through Tailscale Serve on the Nokia.
+In **Connection → SMS sending**, enter the Nokia's HTTPS origin, for example
+`https://nokia8110.your-tailnet.ts.net`, and tap **Connect SMS**. Both phones
+need to be online in the tailnet. SMS needs no call relay server or connection.
+Previous relay-based SMS settings are deliberately not reused; enter the Nokia's
+URL after updating from 0.4.0.
+
+Tap **New SMS** in the inbox or **Reply** in a conversation. Enter a recipient,
+message, and SIM 1 or 2, then tap **Send SMS**. Recipients must have 3–20 digits
+with an optional leading `+`; spaces, parentheses, and hyphens are removed.
+The composer counts GSM septets or UTF-16 units and prevents messages exceeding
+the single-segment limit (160 GSM septets or 70 UTF-16 units).
+
+The phone reports queued, sending, sent, failed, or uncertain status. Queued
+means accepted by the phone; unavailable SIMs retain queued jobs. Sent means
+accepted by the modem, not a delivery receipt. Sent SMSes upload to Convex
+through the existing firmware path. The app refreshes history on sent status;
+pull down again if the upload has not arrived yet.
+
+Before submission, the app saves a random request ID and SIM locally, without
+recipient or message text. The Nokia saves the request ID and outbox job in
+one transaction. Reusing an ID with the same payload returns that job; changing
+the payload with that ID is rejected. Submission is never retried automatically.
+After a lost response or process restart, **Reconnect SMS** checks the saved ID
+with a GET request, without submitting another SMS. If the Nokia has no queued
+job for that ID, the app allows an explicit Send tap using the same ID, so a
+late original request cannot create a duplicate. If an earlier request already
+contains different text or a different SIM, the app keeps the new draft and
+checks the earlier job. If the result remains unknown, check with the recipient
+before sending again.
+
+While the app is in the foreground, it checks the last job every two seconds
+until a terminal status arrives. Checks pause in the background and resume when
+the app becomes active. Network failures pause checks until reconnect. An
+accepted submission clears the draft; a rejected or unknown submission keeps it.
+Draft text stays in memory and clears when the app process exits; tracking IDs
+persist until SMS is disabled or the receiver is disconnected. Carrier SMS
+charges apply to the KaiForward phone.
+
+The app requests `INTERNET` and optional `READ_CONTACTS`; SMS goes through the
+KaiForward phone rather than Android's local SMS service.
 
 ## Verification
 
@@ -141,7 +188,9 @@ indexed search, cursor/query binding, search backfill, empty history, cursor
 limits, and existing upload/replay behavior. Android unit
 tests cover conversation grouping, ordering, deduplication, and URL/token
 validation, search debounce/cancellation, stale responses, separate pagination,
-and failed-page retries. On a device, also check denied/revoked Contacts access, name lookup
+and failed-page retries. SMS tests cover GSM/Unicode limits, recipient validation,
+one submission per tap sequence, status updates, timeout uncertainty, and stale
+responses after reconnect. On a device, also check denied/revoked Contacts access, name lookup
 with international numbers, reconnect after restart, offline retry, older
 history, dark mode, and long/Unicode SMSes.
 

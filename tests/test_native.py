@@ -105,6 +105,9 @@ class NativeTests(unittest.TestCase):
         subprocess.run(flags + [str(p) for p in sorted(SOURCES.glob('*.c'))] + ['-lsqlite3', '-o', str(cls.binary)], check=True)
         sources = [SOURCES / name for name in ['common.c', 'sms.c', 'submission.c', 'store.c', 'wifi.c', 'radio.c', 'permission.c', 'call.c']]
         subprocess.run(flags + ['-shared', '-fPIC', *map(str, sources), '-lsqlite3', '-o', str(cls.lib_path)], check=True)
+        cls.clock_lib = Path(cls.build.name) / 'clock.so'
+        subprocess.run(['gcc','-std=gnu11','-Wall','-Wextra','-Werror','-shared','-fPIC',
+                        str(ROOT / 'tests/support/monotonic_clock.c'), '-o',str(cls.clock_lib)], check=True)
         cls.lib = ctypes.CDLL(str(cls.lib_path))
         cls.lib.store_open.argtypes = [ctypes.c_char_p]
         cls.lib.store_open.restype = ctypes.c_void_p
@@ -133,7 +136,7 @@ class NativeTests(unittest.TestCase):
         self.assertEqual(self.lib.store_pdu(self.db, slot, pdu.encode()), 0)
 
     def process(self, *args):
-        process = subprocess.Popen([str(self.binary), '--home', str(self.home), *args], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        process = subprocess.Popen([str(self.binary), '--home', str(self.home), *args], stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=getattr(self, "process_env", None))
         def close():
             if process.poll() is None:
                 process.terminate()
@@ -551,6 +554,96 @@ class NativeTests(unittest.TestCase):
         self.ussd_event(conn, '4')
         eventually(lambda: self.ussd('ussd-read')[1]['type'] == 4)
         self.assertEqual(self.ussd('ussd-read')[1]['state'], 'failed')
+
+    def fake_clock(self):
+        self.clock = 100000
+        self.clock_file = self.home / 'monotonic-clock'
+        self.process_env = {**os.environ, 'LD_PRELOAD':str(self.clock_lib),
+                            'KF_TEST_MONOTONIC_FILE':str(self.clock_file)}
+        self.advance_clock(0)
+
+    def advance_clock(self, milliseconds):
+        self.clock += milliseconds
+        temporary = self.home / 'monotonic-clock.next'
+        temporary.write_text(str(self.clock))
+        temporary.replace(self.clock_file)
+
+    def registration_reply(self, conn, request, state):
+        self.assertEqual(struct.unpack_from('<i', request)[0], 20)
+        send_frame(conn, struct.pack('<iii',0,struct.unpack_from('<i',request,4)[0],0)
+                   + struct.pack('<i',1) + parcel_string(state))
+
+    def sms_success(self, conn, request):
+        self.assertEqual(struct.unpack_from('<i',request)[0],25)
+        send_frame(conn,struct.pack('<iii',0,struct.unpack_from('<i',request,4)[0],0)
+                   + struct.pack('<i',12) + parcel_string(None) + struct.pack('<i',0))
+
+    def test_queued_sms_refreshes_stale_registration_without_notification(self):
+        self.fake_clock()
+        _, conn, _ = self.fake_modem()
+        # The modem reported no service and never announces that service returned.
+        send_frame(conn,struct.pack('<ii',1,1002))
+        self.registration_reply(conn,read_frame(conn),'0')
+        self.assertEqual(self.queue_send().returncode,0)
+        self.advance_clock(16000)
+        query = read_frame(conn)
+        self.assertEqual(self.rows('SELECT status FROM outbox'),[('queued',)])
+        self.registration_reply(conn,query,'1')
+        request = read_frame(conn)
+        self.sms_success(conn,request)
+        eventually(lambda:self.rows('SELECT status FROM outbox')==[('sent',)])
+        conn.settimeout(.1)
+        with self.assertRaises(socket.timeout): conn.recv(1)
+
+    def test_stale_registered_state_is_checked_before_sending(self):
+        self.fake_clock()
+        _, conn, _ = self.fake_modem()
+        eventually(lambda:self.control('1 status')['registered'])
+        self.advance_clock(60000)
+        self.assertEqual(self.queue_send().returncode,0)
+        query=read_frame(conn)
+        self.registration_reply(conn,query,'0')
+        self.assertEqual(self.rows('SELECT status FROM outbox'),[('queued',)])
+        conn.settimeout(.1)
+        with self.assertRaises(socket.timeout): conn.recv(1)
+        conn.settimeout(5)
+        self.advance_clock(16000)
+        self.registration_reply(conn,read_frame(conn),'1')
+        self.sms_success(conn,read_frame(conn))
+        eventually(lambda:self.rows('SELECT status FROM outbox')==[('sent',)])
+
+    def test_sms_accepts_late_modem_reply_without_resending(self):
+        self.fake_clock()
+        self.assertEqual(self.queue_send().returncode,0)
+        _, conn, _ = self.fake_modem()
+        sms=read_frame(conn)
+        self.assertEqual(struct.unpack_from('<i',sms)[0],25)
+        self.advance_clock(31000)
+        send_frame(conn,struct.pack('<ii',1,1002))
+        registration=read_frame(conn)  # Socket survives the old 30-second deadline.
+        self.assertEqual(struct.unpack_from('<i',registration)[0],20)
+        self.advance_clock(60000)
+        # Even an unrelated query's old deadline must not close this SMS's socket.
+        self.assertTrue(self.control('1 status')['connected'])
+        self.registration_reply(conn,registration,'1')
+        self.sms_success(conn,sms)
+        eventually(lambda:self.rows('SELECT status FROM outbox')==[('sent',)])
+        self.assertEqual(self.rows('SELECT count(*) FROM outbox'),[(1,)])
+        self.assertEqual(self.rows('SELECT count(*) FROM messages'),[(1,)])
+        conn.settimeout(.1)
+        with self.assertRaises(socket.timeout): conn.recv(1)
+
+    def test_sms_timeout_remains_uncertain_and_is_not_requeued(self):
+        self.fake_clock()
+        self.assertEqual(self.queue_send().returncode,0)
+        _, conn, _ = self.fake_modem()
+        self.assertEqual(struct.unpack_from('<i',read_frame(conn))[0],25)
+        self.advance_clock(181000)
+        conn.settimeout(3)
+        self.assertEqual(conn.recv(1),b'')
+        eventually(lambda:self.rows('SELECT status FROM outbox')==[('uncertain',)])
+        self.assertEqual(self.rows('SELECT count(*) FROM outbox'),[(1,)])
+        self.assertEqual(self.rows(),[])
 
     def test_native_send_archives_only_modem_confirmed_success(self):
         self.assertEqual(self.queue_send().returncode, 0)

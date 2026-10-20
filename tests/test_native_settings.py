@@ -96,7 +96,7 @@ class NativeSettingsTests(unittest.TestCase):
     def test_cli_partial_updates_private_storage_and_defaults(self):
         defaults = json.loads(self.command('--settings').stdout)
         self.assertEqual(defaults, dict(ssid='', url='', relay_url='',
-                                       password_set=False, token_set=False))
+                                       password_set=False, token_set=False, app_token_set=False))
         values = dict(ssid='ঢাকা "home"', password='private=password',
                       url='https://example.org/v1/messages', token='private-token')
         result = self.update(values)
@@ -161,10 +161,10 @@ class NativeSettingsTests(unittest.TestCase):
     def test_legacy_device_id_is_ignored_and_dropped_on_save(self):
         (self.home / 'config').write_text('ssid=home\npassword=password12\nurl=\ntoken=\ndevice_id=nokia-8110\n')
         self.assertEqual(json.loads(self.command('--settings').stdout),
-                         dict(ssid='home', url='', relay_url='', password_set=True, token_set=False))
+                         dict(ssid='home', url='', relay_url='', password_set=True, token_set=False, app_token_set=False))
         self.update({'token': 'new-token'})
         self.assertEqual((self.home / 'config').read_text(),
-                         'ssid=home\npassword=password12\nurl=\ntoken=new-token\nrelay_url=\n')
+                         'ssid=home\npassword=password12\nurl=\ntoken=new-token\nrelay_url=\napp_token=\n')
 
     def test_corrupt_config_and_busy_lock_are_not_overwritten(self):
         (self.home / 'config').write_text('unrecognized=private\n')
@@ -297,6 +297,81 @@ class NativeSettingsTests(unittest.TestCase):
         with closing(sqlite3.connect(self.home / 'native.sqlite3')) as db:
             self.assertEqual(db.execute('SELECT body FROM messages').fetchall(), [('during HTTP',)])
         self.assertIsNone(self.process.poll())
+
+    def sms(self, body, token='fixture-app-token'):
+        return self.request('POST', json.dumps(body), {'Authorization': 'Bearer ' + token}, path='/v1/sms/send')
+
+    def test_sms_app_auth_is_separate_and_rotates_without_restart(self):
+        self.update({'token':'upload-token'})
+        self.start()
+        self.assertEqual(self.request(path='/v1/sms', auth=False)[0], 503)
+        self.update({'app_token':'fixture-app-token'})
+        self.assertEqual(self.request(path='/v1/sms', auth=False)[0], 401)
+        self.assertEqual(self.request(path='/v1/sms')[0], 401)
+        self.assertEqual(self.request(path='/v1/sms', headers={'Authorization':'Bearer upload-token'})[0], 401)
+        headers = {'Authorization':'Bearer fixture-app-token'}
+        self.assertEqual(self.request(path='/v1/sms', headers=headers), (200, {'slots':[1,2]}))
+        self.assertEqual(self.request(headers=headers)[0], 401)
+        self.assertEqual(self.request(path='/v1/status', headers=headers)[0], 401)
+        data = self.request()[1]
+        self.assertTrue(data['app_token_set'])
+        self.assertNotIn('fixture-app-token', json.dumps(data))
+        self.update({'app_token':'rotated-app-token'})
+        self.assertEqual(self.request(path='/v1/sms', headers=headers)[0], 401)
+        self.assertEqual(self.request(path='/v1/sms', headers={'Authorization':'Bearer rotated-app-token'})[0], 200)
+
+    def test_sms_submission_is_durable_idempotent_and_reports_only_job_metadata(self):
+        self.update({'app_token':'fixture-app-token'})
+        self.start()
+        payload = {'requestId':'a2fb625a-4599-4bbb-9358-e46cf9c39af5', 'slot':2, 'number':'+8801712345678', 'text':'হ্যালো 😀'}
+        status, data = self.sms(payload)
+        self.assertEqual(status, 202)
+        self.assertEqual(data, {'job':1,'slot':2,'status':'queued'})
+        self.assertEqual(self.sms(payload), (202, data))
+        self.assertEqual(self.sms({**payload, 'text':'different'})[0], 409)
+        self.process.terminate(); self.process.communicate(timeout=5)
+        self.start()
+        self.assertEqual(self.sms(payload), (202, data))
+        path = '/v1/sms/requests/' + payload['requestId']
+        headers = {'Authorization':'Bearer fixture-app-token'}
+        self.assertEqual(self.request(path=path, headers=headers), (200, data))
+        self.assertEqual(self.request(path=path)[0], 401)
+        with closing(sqlite3.connect(self.home / 'native.sqlite3')) as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM outbox').fetchone()[0], 1)
+            db.execute("UPDATE outbox SET status='sent' WHERE id=1"); db.commit()
+        self.assertEqual(self.request(path=path, headers=headers), (200, {**data,'status':'sent'}))
+        self.assertEqual(self.request(path='/v1/sms/requests/00000000-0000-0000-0000-000000000000', headers=headers)[0], 404)
+
+    def test_sms_rejects_invalid_payloads_without_queueing(self):
+        self.update({'app_token':'fixture-app-token'})
+        self.start()
+        payload = {'requestId':'a2fb625a-4599-4bbb-9358-e46cf9c39af5','slot':1,'number':'123','text':'Hello'}
+        bad = [[], {}, {**payload, 'extra':'field'}]
+        for name, values in {'requestId':['', '../settings', 'x'*36, 5], 'slot':[True,0,3,4294967297,1.0],
+                             'number':['12','1'*21,'১২৩','123\n2',None],
+                             'text':['','a'*161,'€'*81,'😀'*36,'x\x00y','\ud800',None]}.items():
+            bad += [{**payload,name:value} for value in values]
+        for body in bad:
+            with self.subTest(body=body): self.assertEqual(self.sms(body)[0], 400)
+        headers = {'Authorization':'Bearer fixture-app-token'}
+        for method in ['GET','PATCH','DELETE']:
+            self.assertEqual(self.request(method, headers=headers, path='/v1/sms/send')[0], 405)
+        with closing(sqlite3.connect(self.home / 'native.sqlite3')) as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM outbox').fetchone()[0], 0)
+        for name in ['slot','text','number','requestId']:
+            raw = json.dumps(payload)[:-1] + ',' + json.dumps(name) + ':' + json.dumps(payload[name]) + '}'
+            self.assertEqual(self.request('POST', raw, headers, '/v1/sms/send')[0], 400)
+
+    def test_sms_parallel_replays_queue_once(self):
+        from concurrent.futures import ThreadPoolExecutor
+        self.update({'app_token':'fixture-app-token'})
+        self.start()
+        payload = {'requestId':'a2fb625a-4599-4bbb-9358-e46cf9c39af5','slot':1,'number':'123','text':'Hello'}
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            results = list(pool.map(lambda _: self.sms(payload), range(4)))
+        self.assertEqual(results, [(202, {'job':1,'slot':1,'status':'queued'})]*4)
+        with closing(sqlite3.connect(self.home / 'native.sqlite3')) as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM outbox').fetchone()[0], 1)
 
 
 class SettingsAdbTests(unittest.TestCase):

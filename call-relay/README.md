@@ -121,6 +121,10 @@ kaiforward-native --call 1 ussd-cancel
 
 ## SMS
 
+The Android app sends directly to the Nokia’s authenticated HTTP API over
+Tailscale ([setup](../firmware/README.md#direct-sms-api)). The controls below
+are for the existing browser client.
+
 Sending SMS also needs the updated SMS service and call helper (see USSD
 below). Enter the recipient in the number field and the text in the message
 box, then press **Text SIM 1** or **Text SIM 2**. The phone sends one segment

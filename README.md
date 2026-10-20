@@ -1,10 +1,12 @@
 # KaiForward
 
-## Android SMS viewer
+## Android SMS app
 
 The native Android app in [`android/`](android/README.md) displays SMSes forwarded
 from the KaiForward phone through the Convex receiver. It includes conversations,
-message search, paginated history, and optional local contact-name lookup.
+message search, paginated history, optional local contact-name lookup, and SMS
+sending directly through either SIM on the Nokia over Tailscale. Viewing and sending use one
+app token.
 See the [Android setup instructions](android/README.md) to build the APK and
 configure authenticated read access.
 
@@ -64,7 +66,7 @@ For example, `settings.json` can contain:
 {"ssid":"Your Wi-Fi","password":"your-password"}
 ```
 
-The writable fields are `ssid`, `password`, `url`, `token` and `relay_url`.
+The writable fields are `ssid`, `password`, `url`, `token`, `relay_url` and `app_token`.
 `url` is the SMS receiver (`https://…/v1/messages`); `relay_url` is the
 [call relay server](call-relay/README.md) (`tls://host[:port]`).
 Omitted fields keep their current values. Empty `password` selects an open
@@ -118,8 +120,9 @@ The old key stops working once the service restarts.
 
 ## Call relay server
 
-Browser call control, SMS sending and USSD codes run on a separate server reachable over
-Tailscale, not on Convex. On that server, with the phone on root ADB, prepare its private
+Browser call control and USSD codes run on a separate server reachable over
+Tailscale. Android SMS sending connects directly to the Nokia
+([setup](firmware/README.md#direct-sms-api)). On that server, with the phone on root ADB, prepare its private
 token and certificate and point the phone at it:
 
 ```sh

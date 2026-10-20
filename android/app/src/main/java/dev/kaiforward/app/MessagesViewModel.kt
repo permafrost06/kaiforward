@@ -26,6 +26,12 @@ data class ViewerState(
 
 class MessagesViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = MessageRepository(application)
+    private val relayPrefs = application.getSharedPreferences("sms-phone", android.content.Context.MODE_PRIVATE)
+    private val sending = SmsSending(viewModelScope, onSent = { refresh(); thread.refresh() },
+        onTrack = { id, slot -> check(relayPrefs.edit().putString("request", id).putInt("slot", slot).commit()) },
+        onForget = { relayPrefs.edit().remove("request").remove("slot").apply() },
+        restoredRequest = relayPrefs.getString("request", null)?.let { it to relayPrefs.getInt("slot", 1) })
+    val sendingState = sending.state
     private val store = ConnectionStore(application)
     private var connection = store.load()
     private var loadJob: Job? = null
@@ -47,7 +53,24 @@ class MessagesViewModel(application: Application) : AndroidViewModel(application
 
     fun search(query: String) = search.query(query)
     fun moreSearchResults() = search.moreOrRetry()
-    init { if (connection != null) refresh() }
+    init {
+        if (connection != null) {
+            refresh()
+            relayPrefs.getString("endpoint", null)?.let { sending.connect(it, connection!!.token) }
+        }
+    }
+    fun configureSending(endpoint: String) {
+        val current = connection ?: return
+        val candidate = try { validateConnection(endpoint, current.token) } catch (_: Exception) {
+            mutable.update { it.copy(error = "Enter the Nokia’s HTTPS origin.") }; return
+        }
+        relayPrefs.edit().putString("endpoint", candidate.endpoint).apply()
+        sending.connect(candidate.endpoint, current.token)
+    }
+    fun setSendingActive(active: Boolean) = sending.setActive(active)
+    fun disconnectSending() { sending.disconnect(); relayPrefs.edit().clear().apply() }
+    fun sendSms(number: String, text: String, slot: Int) = sending.send(number, text, slot)
+    override fun onCleared() { sending.close(); super.onCleared() }
 
     fun connect(endpoint: String, token: String) {
         if (mutable.value.busy) return
@@ -106,6 +129,7 @@ class MessagesViewModel(application: Application) : AndroidViewModel(application
         }
     }
     fun disconnect() {
+        disconnectSending()
         search.query("")
         thread.open(null)
         loadJob?.cancel()

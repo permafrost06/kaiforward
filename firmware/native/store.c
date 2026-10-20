@@ -43,7 +43,8 @@ sqlite3 *store_open(const char *home) {
                  "TEXT DEFAULT 'received',recipient TEXT DEFAULT '');"
                  "CREATE TABLE IF NOT EXISTS outbox(id INTEGER PRIMARY KEY AUTOINCREMENT,slot "
                  "INTEGER,recipient TEXT,body TEXT,pdu TEXT,stamp INTEGER,status TEXT DEFAULT "
-                 "'queued');")) {
+                 "'queued');"
+                 "CREATE TABLE IF NOT EXISTS sms_requests(request_id TEXT PRIMARY KEY,job INTEGER NOT NULL UNIQUE);")) {
         sqlite3_close(db);
         return NULL;
     }
