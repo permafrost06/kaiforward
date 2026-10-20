@@ -41,6 +41,7 @@ export const send = internalAction({
     // Keep the entire data payload comfortably below FCM's 4096-byte limit.
     let limit = Math.min(700, characters.length);
     const data = { sender: message.sender, body: "", conversation: message.conversation ?? message.sender, messageKey: message.key,
+      receivedAt: String(message.receivedAt),
       ...(message.simSlot != null ? { simSlot: String(message.simSlot) } : {}),
     };
     do {

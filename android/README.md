@@ -114,12 +114,17 @@ If permission was declined, enable **Settings → Apps → KaiForward → Notifi
 Optional Contacts permission resolves sender names locally for notifications.
 
 Newly stored incoming messages trigger a high-priority FCM data message. The app
-shows the sender/contact name and expandable SMS text; tapping opens the matching
+shows a forwarding-envelope icon, sender/contact name, SIM number (when known),
+and expandable SMS text; tapping opens the matching
 conversation and message. The preview is limited to 700 Unicode code points;
 the conversation contains the full message. Notifications for a conversation
 replace its previous alert. Sender and preview text pass through Firebase;
 contacts remain local. Lock-screen previews follow Android's private-notification
-and user settings. There is no inline reply action.
+and user settings. **Mark as read** dismisses the alert and marks that conversation
+read locally through the alerted message without opening the app; later arrivals
+remain unread. Deploy the updated receiver to include SIM and server arrival time
+in push payloads. Alerts from older receivers omit the quick action because they
+lack a safe read cutoff. There is no inline reply action.
 
 Upload replays, sent messages, and migrations do not notify. A newly uploaded
 message from an older phone backlog does notify. Failed uploads never notify.
@@ -189,7 +194,7 @@ marks all existing history as read, including conversations/pages loaded later.
 Incoming SMSes uploaded after that sync are unread until their conversation is
 opened successfully. Unread rows have bold text and a dot; opening from search
 or a notification also marks the conversation read. Sent SMSes are always read.
-There are no manual read/unread actions. Read status survives app updates and
+Notifications also offer **Mark as read**; there is no manual unread action. Read status survives app updates and
 process restarts, and resets when app data is cleared or the app is uninstalled.
 The receiver supplies snapshot/arrival times (including an indexed latest
 incoming arrival per conversation); it stores no read status. Deploy the receiver

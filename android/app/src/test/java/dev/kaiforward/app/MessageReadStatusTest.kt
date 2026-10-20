@@ -25,6 +25,18 @@ class MessageReadStatusTest {
         assertEquals(restored, restored.opened("bank", 125))
     }
 
+    @Test fun notificationCutoffReadsOnlyThroughTheAlertAndNeverMovesBackwards() {
+        val status = MessageReadStatus().initialize(100).opened("bank", 150)
+        assertFalse(status.isUnread(incoming(150)))
+        assertTrue(status.isUnread(incoming(151)))
+        assertTrue(status.isUnread(incoming(150, peer = "Other")))
+        assertEquals(status, status.opened("bank", 120))
+        // An action before the first inbox sync can initialize local read status.
+        val beforeSync = MessageReadStatus().opened("bank", 150)
+        assertFalse(beforeSync.isUnread(incoming(150)))
+        assertTrue(beforeSync.initialize(200).isUnread(incoming(151)))
+    }
+
     @Test fun arrivalTimeHandlesOldBacklogAndFutureSmsDatesAndSentMessagesAreRead() {
         val status = MessageReadStatus().initialize(100)
         assertTrue(status.isUnread(incoming(101, timestamp = 1)))

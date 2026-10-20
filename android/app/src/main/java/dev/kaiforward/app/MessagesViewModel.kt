@@ -36,6 +36,9 @@ class MessagesViewModel(application: Application) : AndroidViewModel(application
     private val connection = validateConnection(BuildConfig.RECEIVER_URL, BuildConfig.APP_TOKEN)
     private var contactsJob: Job? = null
     private val mutable = MutableStateFlow(ViewerState(connected = true, contactsAllowed = repository.hasContactsPermission(), readStatus = readStore.load()))
+    private val readListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
+        mutable.update { it.copy(readStatus = readStore.load()) }
+    }
     val state = mutable.asStateFlow()
     private val search = MessageSearch(viewModelScope,
         fetch = { query, cursor -> repository.search(connection, query, cursor) },
@@ -54,6 +57,7 @@ class MessagesViewModel(application: Application) : AndroidViewModel(application
     fun search(query: String) = search.query(query)
     fun moreSearchResults() = search.moreOrRetry()
     init {
+        readStore.observe(readListener)
         // Retire editable connection values from earlier versions, preserving SMS tracking.
         application.getSharedPreferences("connection", android.content.Context.MODE_PRIVATE).edit().clear().apply()
         relayPrefs.edit().remove("endpoint").apply()
@@ -70,15 +74,11 @@ class MessagesViewModel(application: Application) : AndroidViewModel(application
         }
     }
     private fun updateReadStatus(change: (MessageReadStatus) -> MessageReadStatus) {
-        val previous = mutable.value.readStatus
-        val updated = change(previous)
-        if (updated != previous) {
-            readStore.save(updated)
-            mutable.update { it.copy(readStatus = updated) }
-        }
+        val updated = readStore.update(change)
+        mutable.update { it.copy(readStatus = updated) }
     }
     fun sendSms(number: String, text: String, slot: Int) = sending.send(number, text, slot)
-    override fun onCleared() { sending.close(); super.onCleared() }
+    override fun onCleared() { readStore.stopObserving(readListener); sending.close(); super.onCleared() }
 
     fun refresh() = load(false)
     fun loadOlder() {

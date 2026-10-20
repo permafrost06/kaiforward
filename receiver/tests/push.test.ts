@@ -82,8 +82,9 @@ describe("new-message push", () => {
     expect(call).toBeDefined();
     const body = call![1].body as string;
     const payload = JSON.parse(body);
+    const stored = await t.run(ctx => ctx.db.get(args.messageId));
     expect(payload.message.data).toMatchObject({ sender: item.sender, conversation: item.sender,
-      messageKey: item.key, simSlot: "2" });
+      messageKey: item.key, simSlot: "2", receivedAt: String(stored!.receivedAt) });
     expect(payload.message.data.body).toBe("😀".repeat(700) + "…");
     expect(new TextEncoder().encode(body).length).toBeLessThan(4096);
     expect(body).not.toContain("reader");
@@ -109,6 +110,7 @@ describe("new-message push", () => {
     await t.action(internal.pushDelivery.send, args);
     const payload = JSON.parse(fetch.mock.calls.find(([url]) => url.includes("fcm.googleapis.com"))![1].body as string);
     expect(payload.message.data.simSlot).toBe(simSlot == null ? undefined : String(simSlot));
+    expect(Number(payload.message.data.receivedAt)).toBeGreaterThan(0);
   });
 
   it("removes unregistered tokens and retries temporary failures", async () => {

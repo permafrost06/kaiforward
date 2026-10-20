@@ -6,6 +6,7 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -113,17 +114,45 @@ class MessagePushService : FirebaseMessagingService() {
                 .setData(Uri.parse("kaiforward://conversation/" + Uri.encode(conversation)))
                 .putExtra("conversation", conversation).putExtra("sender", sender).putExtra("messageKey", messageKey),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val receivedAt = message.data["receivedAt"]?.toLongOrNull()?.takeIf { it >= 0 }
         val simSlot = message.data["simSlot"]?.toIntOrNull()?.takeIf { it in 1..2 }
         val notification = Notification.Builder(this, "messages")
             .setSmallIcon(R.drawable.ic_notification).setContentTitle(title)
             .setContentText(body).setStyle(Notification.BigTextStyle().bigText(body))
             .setCategory(Notification.CATEGORY_MESSAGE).setOnlyAlertOnce(false)
             .setContentIntent(open).setAutoCancel(true).setVisibility(Notification.VISIBILITY_PRIVATE)
-            .apply { simSlot?.let { setSubText("SIM $it") } }.build()
+            .apply {
+                simSlot?.let { setSubText("SIM $it") }
+                // Older receivers lack a server cutoff, so cannot safely mark an alert read.
+                receivedAt?.let { cutoff ->
+                    val markRead = PendingIntent.getBroadcast(this@MessagePushService, 0,
+                        Intent(this@MessagePushService, MarkMessageReadReceiver::class.java)
+                            .setAction(MarkMessageReadReceiver.ACTION)
+                            .setData(Uri.parse("kaiforward://mark-read/" + Uri.encode(conversation)))
+                            .putExtra("conversation", conversation).putExtra("receivedAt", cutoff),
+                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+                    addAction(Notification.Action.Builder(null, "Mark as read", markRead).build())
+                }
+            }.build()
         getSystemService(NotificationManager::class.java).notify(conversation, 0, notification)
         val recent = JSONArray()
         for (index in maxOf(0, seen.length() - 99) until seen.length()) recent.put(seen.getString(index))
         recent.put(messageKey)
         prefs.edit().putString("seenMessages", recent.toString()).apply()
+    }
+}
+
+/** Explicit, app-private action; no network or activity launch is needed. */
+class MarkMessageReadReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action != ACTION) return
+        val conversation = intent.getStringExtra("conversation")?.takeIf { it.isNotBlank() } ?: return
+        val receivedAt = intent.getLongExtra("receivedAt", -1).takeIf { it >= 0 } ?: return
+        MessageReadStore(context).update { it.opened(conversation, receivedAt) }
+        context.getSystemService(NotificationManager::class.java).cancel(conversation, 0)
+    }
+
+    companion object {
+        const val ACTION = "dev.kaiforward.app.MARK_MESSAGE_READ"
     }
 }
