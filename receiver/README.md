@@ -117,3 +117,20 @@ The action processes bounded batches and returns `assigned` and `cursor`.
 Continue with the returned cursor if non-null. It is safe to rerun and supports
 new uploads during migration. Original SMS data is preserved. Contacts remain
 local to Android; no read/unread feature is introduced by this migration.
+
+## Android push delivery
+
+Follow the [Firebase setup](../android/README.md#new-message-push-notifications)
+to set `FIREBASE_SERVICE_ACCOUNT_JSON` and build a configured APK.
+`POST /v1/push/devices` requires `KAIFORWARD_READ_TOKEN` and accepts
+`{"installation":"<UUID>","token":"<FCM registration token>"}`. Registration
+updates one record per installation, storing a hash of the authorizing read
+credential. Tokens are never exposed by a public query.
+
+New incoming-message insertions atomically schedule paginated device fanout.
+Identical upload replays and failed/conflicting batches cannot schedule extra
+notifications. Node actions obtain short-lived OAuth credentials and call FCM
+HTTP v1 with sender/text previews. Invalidated tokens are removed; transient
+failures receive bounded exponential retries. No Firebase credentials or read
+tokens appear in notification payloads. Missing Firebase configuration disables
+delivery without interrupting storage. Re-deploying does not notify old history.

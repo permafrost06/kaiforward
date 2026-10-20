@@ -79,6 +79,67 @@ The release certificate differs from the development debug certificate. To
 replace an existing debug installation, first uninstall it, then install the
 release APK. This does not delete SMSes stored on the receiver.
 
+## New message push notifications
+
+Use the **kaiforward** Firebase project and register an Android app with package
+name `dev.kaiforward.app`. Download `google-services.json` into
+`android/app/google-services.json` (ignored by Git). Rebuild the APK after adding
+this file. Builds without it still work as a viewer, with push disabled.
+
+In Firebase **Project settings → Cloud Messaging**, ensure **Firebase Cloud
+Messaging API (V1)** is enabled. In **Project settings → Service accounts**,
+generate a private service-account JSON key for the same project. The account
+must have permission to send FCM messages (`cloudmessaging.messages.create`,
+provided by the Firebase Cloud Messaging API Admin role). Store the JSON
+privately outside tracked files, for example `data/firebase-service-account.json`.
+This private key belongs only in Convex; never put it in the Android app.
+
+Set the entire JSON as a Convex environment variable and deploy the receiver:
+
+```sh
+cd receiver
+npx convex env set --prod FIREBASE_SERVICE_ACCOUNT_JSON --from-file ../data/firebase-service-account.json
+npx convex deploy
+```
+
+For a development deployment, omit `--prod` and use `npx convex dev --once`.
+Keep the existing upload and read tokens. The Firebase Android configuration and
+service account must refer to the same Firebase project. No firmware changes,
+Firebase database, Analytics setup, or Play Store release are required.
+
+Build and install the APK using the commands above, open it once while online,
+and allow notifications when prompted on Android 13+. Registration is automatic
+and retries network failures using WorkManager. Devices need Google Play services.
+If permission was declined, enable **Settings → Apps → KaiForward → Notifications**.
+Optional Contacts permission resolves sender names locally for notifications.
+
+Newly stored incoming messages trigger a high-priority FCM data message. The app
+shows the sender/contact name and expandable SMS text; tapping opens the matching
+conversation and message. The preview is limited to 700 Unicode code points;
+the conversation contains the full message. Notifications for a conversation
+replace its previous alert. Sender and preview text pass through Firebase;
+contacts remain local. Lock-screen previews follow Android's private-notification
+and user settings. There is no inline reply action.
+
+Upload replays, sent messages, and migrations do not notify. A newly uploaded
+message from an older phone backlog does notify. Failed uploads never notify.
+Push failures do not block SMS storage. Convex retries temporary delivery errors
+up to four times; the app suppresses duplicate delivery for its 100 most recent alerts.
+Expired Firebase tokens are removed, and registrations unused for 60 days are
+pruned during fanout. Opening the app renews registration. Rotating the read
+token prevents delivery to registrations with the old credential; rebuild and
+open the app with the new token to register again.
+
+To verify delivery, open the installed app online, allow notifications, put it in
+the background, and send a real SMS to the Nokia. Check the sender/text alert and
+that tapping it opens the conversation. Also test with the Android screen locked,
+with Contacts denied, and with notifications denied. Force-stopping the Android
+app blocks FCM delivery until the app is opened again. Check Convex function logs
+for configuration/delivery errors if messages arrive in the inbox without alerts.
+
+Official setup: [Firebase Android setup](https://firebase.google.com/docs/android/setup)
+and [FCM Android setup](https://firebase.google.com/docs/cloud-messaging/android/get-started).
+
 ## Open and view
 
 Open KaiForward to load conversations automatically using the embedded
@@ -176,7 +237,7 @@ Draft text stays in memory and clears when the app process exits; tracking IDs
 persist until the tracked job is resolved or app data is cleared. Carrier SMS
 charges apply to the KaiForward phone.
 
-The app requests `INTERNET` and optional `READ_CONTACTS`; SMS goes through the
+The app requests `INTERNET`, optional `READ_CONTACTS`, and notification permission; SMS goes through the
 KaiForward phone rather than Android's local SMS service.
 
 ## Verification

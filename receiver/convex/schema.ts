@@ -13,6 +13,9 @@ export const message = {
 };
 
 export default defineSchema({
+  pushDevices: defineTable({
+    installation: v.string(), token: v.string(), credential: v.string(), updatedAt: v.number(),
+  }).index("by_installation", ["installation"]),
   conversations: defineTable({
     key: v.string(),
     number: v.string(),

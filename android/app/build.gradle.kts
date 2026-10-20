@@ -5,6 +5,9 @@ plugins {
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
+// Firebase is optional until the project configuration is supplied.
+val pushConfigured = file("google-services.json").isFile
+if (pushConfigured) apply(plugin = "com.google.gms.google-services")
 val releaseSigningFile = rootProject.file("../data/android-release/signing.properties")
 val releaseSigning = Properties().apply {
     if (releaseSigningFile.isFile) releaseSigningFile.inputStream().use { load(it) }
@@ -27,8 +30,9 @@ android {
         applicationId = "dev.kaiforward.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 8
-        versionName = "0.4.2"
+        versionCode = 9
+        versionName = "0.5.0"
+        buildConfigField("boolean", "PUSH_CONFIGURED", pushConfigured.toString())
         buildConfigField("String", "RECEIVER_URL", quoted("https://peaceful-cuttlefish-556.convex.site"))
         buildConfigField("String", "SMS_URL", quoted("https://nokia8110.tailcf48c.ts.net"))
         buildConfigField("String", "APP_TOKEN", quoted(appToken))
@@ -63,6 +67,9 @@ tasks.matching { it.name == "preReleaseBuild" }.configureEach {
 }
 kotlin { compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) } }
 dependencies {
+    implementation("com.google.firebase:firebase-messaging:25.0.1")
+    implementation("androidx.work:work-runtime-ktx:2.10.5")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.10.2")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation(platform("androidx.compose:compose-bom:2025.11.00"))
     implementation("androidx.activity:activity-compose:1.11.0")

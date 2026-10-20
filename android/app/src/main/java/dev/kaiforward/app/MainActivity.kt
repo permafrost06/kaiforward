@@ -60,12 +60,16 @@ import java.time.format.FormatStyle
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        PushRegistration.enqueue(this)
         enableEdgeToEdge()
         setContent {
             val colors = if (isSystemInDarkTheme()) darkColorScheme(primary = Color(0xFF9DD5C4))
                 else lightColorScheme(primary = Color(0xFF164E43), secondary = Color(0xFF52655E),
                     background = Color(0xFFF8FAF7), surface = Color(0xFFF8FAF7))
-            MaterialTheme(colorScheme = colors) { SmsViewer() }
+            MaterialTheme(colorScheme = colors) {
+                SmsViewer(initialConversation = intent.getStringExtra("conversation"),
+                    initialNumber = intent.getStringExtra("sender"), initialMessage = intent.getStringExtra("messageKey"))
+            }
         }
     }
 }
@@ -75,7 +79,8 @@ private fun dateTime(timestamp: Long): String = DateTimeFormatter.ofLocalizedDat
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SmsViewer(model: MessagesViewModel = viewModel()) {
+fun SmsViewer(model: MessagesViewModel = viewModel(), initialConversation: String? = null,
+    initialNumber: String? = null, initialMessage: String? = null) {
     val state by model.state.collectAsStateWithLifecycle()
     val searchState by model.searchState.collectAsStateWithLifecycle()
     val threadState by model.threadState.collectAsStateWithLifecycle()
@@ -89,19 +94,39 @@ fun SmsViewer(model: MessagesViewModel = viewModel()) {
         if (sending.accepted > 0 && submittedDraft == Triple(draftNumber, draftText, draftSlot)) draftText = ""
         submittedDraft = null
     }
-    var selected by rememberSaveable { mutableStateOf<String?>(null) }
-    var selectedNumber by rememberSaveable { mutableStateOf<String?>(null) }
-    var selectedMessage by rememberSaveable { mutableStateOf<String?>(null) }
+    var selected by rememberSaveable { mutableStateOf(initialConversation) }
+    var selectedNumber by rememberSaveable { mutableStateOf(initialNumber) }
+    var selectedMessage by rememberSaveable { mutableStateOf(initialMessage) }
     var searchOpen by rememberSaveable { mutableStateOf(false) }
     var search by rememberSaveable { mutableStateOf("") }
     var contactHelp by rememberSaveable { mutableStateOf(false) }
     val context = LocalContext.current
+    val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    val pushPrefs = remember { context.getSharedPreferences("push", android.content.Context.MODE_PRIVATE) }
+    var offerNotifications by remember { mutableStateOf(BuildConfig.PUSH_CONFIGURED &&
+        android.os.Build.VERSION.SDK_INT >= 33 && !pushPrefs.getBoolean("permissionAsked", false) &&
+        context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) }
+    if (offerNotifications) AlertDialog(
+        onDismissRequest = { offerNotifications = false; pushPrefs.edit().putBoolean("permissionAsked", true).apply() },
+        title = { Text("New message notifications") },
+        text = { Text("Get notified when a new SMS arrives. Notifications show the sender and message text.") },
+        confirmButton = { TextButton(onClick = {
+            offerNotifications = false
+            pushPrefs.edit().putBoolean("permissionAsked", true).apply()
+            if (android.os.Build.VERSION.SDK_INT >= 33) notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }) { Text("Enable") } },
+        dismissButton = { TextButton(onClick = {
+            offerNotifications = false; pushPrefs.edit().putBoolean("permissionAsked", true).apply()
+        }) { Text("Not now") } })
     val keyboard = LocalSoftwareKeyboardController.current
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { allowed ->
         model.resolveContacts()
         contactHelp = !allowed
     }
-    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { model.resolveContacts(); model.setSendingActive(true) }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        model.resolveContacts(); model.setSendingActive(true)
+        if (BuildConfig.PUSH_CONFIGURED) { model.refresh(); model.refreshThread() }
+    }
     LifecycleEventEffect(Lifecycle.Event.ON_PAUSE) { model.setSendingActive(false) }
     val threads = state.conversations
     val inboxThread = threads.firstOrNull { it.key == selected }

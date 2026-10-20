@@ -64,6 +64,32 @@ http.route({
 });
 
 http.route({
+  path: "/v1/push/devices",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const token = process.env.KAIFORWARD_READ_TOKEN;
+    if (!token) return respond(503, { error: "Message viewing not configured" });
+    if (!sameSecret(request.headers.get("Authorization") ?? "", `Bearer ${token}`))
+      return respond(401, { error: "Unauthorized" });
+    try {
+      const raw = await request.arrayBuffer();
+      if (raw.byteLength > 8192) return respond(413, { error: "Registration too large" });
+      const payload = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(raw));
+      if (typeof payload?.installation !== "string" || !/^[a-f0-9-]{36}$/i.test(payload.installation) ||
+          typeof payload.token !== "string" || !/^[\x21-\x7e]{1,4096}$/.test(payload.token))
+        return respond(400, { error: "Invalid registration" });
+      const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
+      const credential = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("");
+      await ctx.runMutation(internal.push.register, { installation: payload.installation, token: payload.token, credential });
+      return respond(200, { ok: true });
+    } catch (error) {
+      if (error instanceof SyntaxError || error instanceof TypeError) return respond(400, { error: "Invalid registration" });
+      throw error;
+    }
+  }),
+});
+
+http.route({
   path: "/v1/conversations",
   method: "GET",
   handler: httpAction(async (ctx, request) => {

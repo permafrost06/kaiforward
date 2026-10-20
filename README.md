@@ -5,7 +5,8 @@
 The native Android app in [`android/`](android/README.md) displays SMSes forwarded
 from the KaiForward phone through the Convex receiver. It includes conversations,
 message search, paginated history, optional local contact-name lookup, and SMS
-sending directly through either SIM on the Nokia over Tailscale. Viewing and sending use one
+sending directly through either SIM on the Nokia over Tailscale, plus Firebase push
+notifications with sender and SMS previews. See the [push setup](android/README.md#new-message-push-notifications). Viewing and sending use one
 app token.
 See the [Android setup instructions](android/README.md) to build the APK and
 configure authenticated read access.

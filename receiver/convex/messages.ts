@@ -157,7 +157,7 @@ async function store(ctx: MutationCtx, item: Incoming, receivedAt: number) {
   if (!prior) {
     const id = await ctx.db.insert("messages", { ...item, receivedAt, searchText: searchText(item) });
     await assignConversation(ctx, id, item);
-    return;
+    return id;
   }
   // A replayed key is accepted only with identical content, as in the PoC receiver.
   const same = (Object.keys(message) as (keyof Incoming)[]).every((field) => prior[field] === item[field]);
@@ -170,7 +170,13 @@ export const ingest = internalMutation({
   returns: v.array(v.string()),
   handler: async (ctx, { messages }) => {
     const receivedAt = Date.now();
-    for (const item of messages) await store(ctx, item, receivedAt);
+
+    for (const item of messages) {
+      const inserted = await store(ctx, item, receivedAt);
+      if (inserted && item.direction === "received") await ctx.scheduler.runAfter(0, internal.push.enqueue, {
+        receivedAt, messageId: inserted, cursor: null,
+      });
+    }
     return messages.map((item) => item.key);
   },
 });
