@@ -8,7 +8,7 @@
         android:fullBackupContent="false" android:dataExtractionRules="@xml/data_extraction_rules"
         android:supportsRtl="true" android:usesCleartextTraffic="false">
         <meta-data android:name="com.google.firebase.messaging.default_notification_channel_id" android:value="messages" />
-        <meta-data android:name="com.google.firebase.messaging.default_notification_icon" android:resource="@drawable/ic_chat" />
+        <meta-data android:name="com.google.firebase.messaging.default_notification_icon" android:resource="@drawable/ic_notification" />
         <service android:name=".MessagePushService" android:exported="false">
             <intent-filter><action android:name="com.google.firebase.MESSAGING_EVENT" /></intent-filter>
         </service>

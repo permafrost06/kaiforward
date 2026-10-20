@@ -114,7 +114,7 @@ class MessagePushService : FirebaseMessagingService() {
                 .putExtra("conversation", conversation).putExtra("sender", sender).putExtra("messageKey", messageKey),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val notification = Notification.Builder(this, "messages")
-            .setSmallIcon(R.drawable.ic_chat).setContentTitle(title)
+            .setSmallIcon(R.drawable.ic_notification).setContentTitle(title)
             .setContentText(body).setStyle(Notification.BigTextStyle().bigText(body))
             .setCategory(Notification.CATEGORY_MESSAGE).setOnlyAlertOnce(false)
             .setContentIntent(open).setAutoCancel(true).setVisibility(Notification.VISIBILITY_PRIVATE).build()
