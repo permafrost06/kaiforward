@@ -2,6 +2,15 @@
 # Runs as root: Android netd's control socket is inaccessible to dhcp UID.
 PATH=/system/bin:/system/xbin
 export PATH
+# Also used as BusyBox ntpd's callback. Keep this ahead of DHCP's interface
+# check: ntpd supplies step/stratum/periodic events without an interface.
+case "$1" in
+    step|stratum)
+        touch /data/kaiforward/sync
+        exit $?
+        ;;
+    periodic) exit 0 ;;
+esac
 [ "$interface" = wlan0 ] || exit 1
 case "$1" in
     deconfig)

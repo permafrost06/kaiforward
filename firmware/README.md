@@ -125,6 +125,21 @@ native phone through root ADB. This writes settings and requests a reload.
 The keypad UI can edit Wi-Fi and destination settings; certificates are
 provisioned from the PC.
 
+### Automatic Wi-Fi time synchronization
+
+The Wi-Fi supervisor starts BusyBox NTP after Wi-Fi has a default route and
+keeps it running to correct clock drift. It stops the client when Wi-Fi goes
+away and restarts it after reconnects or client failures. This restores the
+clock automatically after battery removal, allowing HTTPS uploads and Tailscale
+to recover. A clock correction requests an immediate SMS upload retry.
+
+The client uses Cloudflare's [published NTP addresses](https://developers.cloudflare.com/time-services/ntp/usage/),
+`162.159.200.1` and `162.159.200.123`, so startup does not depend on DNS or TLS.
+The Wi-Fi network must allow outbound UDP port 123. Diagnostics are in
+`/data/kaiforward/ntp.log`; the phone's time can be checked with `adb shell date -u`.
+Install this change on an existing native phone with
+`python3 -m scripts.update_native --build`. No reboot or firmware flashing is needed.
+
 ## Settings API
 
 Use `python3 -m scripts.settings_native get` to read redacted phone settings,

@@ -7,6 +7,7 @@ HOME_DIR=/data/kaiforward
 SUPPLICANT_CONFIG=/data/misc/wifi/kaiforward.conf
 SUPPLICANT_PID=
 DHCP_PID=
+NTP_PID=
 alive() {
     [ -n "$1" ] && [ -r "/proc/$1/stat" ] || return 1
     # kill -0 also succeeds for a zombie; inspect the child's state instead.
@@ -14,10 +15,13 @@ alive() {
     [ "$state" != Z ] && kill -0 "$1" 2>/dev/null
 }
 cleanup() {
+    [ -z "$NTP_PID" ] || kill "$NTP_PID" 2>/dev/null
     [ -z "$DHCP_PID" ] || kill "$DHCP_PID" 2>/dev/null
     [ -z "$SUPPLICANT_PID" ] || kill "$SUPPLICANT_PID" 2>/dev/null
     [ -z "$DHCP_PID" ] || wait "$DHCP_PID" 2>/dev/null
     [ -z "$SUPPLICANT_PID" ] || wait "$SUPPLICANT_PID" 2>/dev/null
+    [ -z "$NTP_PID" ] || wait "$NTP_PID" 2>/dev/null
+    NTP_PID=
     DHCP_PID=
     SUPPLICANT_PID=
     ndc network destroy 100 >/dev/null 2>&1
@@ -53,6 +57,23 @@ while :; do
     else
         rm -f "$SUPPLICANT_CONFIG.new"
         cleanup
+    fi
+    # The RTC resets after battery removal. NTP bootstraps HTTPS without needing
+    # a working clock or this old BusyBox's incompatible Android DNS resolver.
+    # Cloudflare's published anycast NTP addresses (UDP 123):
+    # https://developers.cloudflare.com/time-services/ntp/usage/
+    if [ "$(cat /sys/class/net/wlan0/carrier 2>/dev/null)" = 1 ] &&
+        ip -4 route show table wlan0 2>/dev/null | busybox grep -q '^default '; then
+        if ! alive "$NTP_PID"; then
+            [ -z "$NTP_PID" ] || wait "$NTP_PID" 2>/dev/null
+            busybox ntpd -n -p 162.159.200.1 -p 162.159.200.123 \
+                -S /system/kaiforward/udhcpc.sh > "$HOME_DIR/ntp.log" 2>&1 &
+            NTP_PID=$!
+        fi
+    else
+        [ -z "$NTP_PID" ] || kill "$NTP_PID" 2>/dev/null
+        [ -z "$NTP_PID" ] || wait "$NTP_PID" 2>/dev/null
+        NTP_PID=
     fi
     if [ "$scan_tick" = 0 ] || [ -f "$HOME_DIR/scan" ]; then
         kaiforward-native --scan-wifi
